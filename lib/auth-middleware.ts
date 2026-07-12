@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import jwt from 'jsonwebtoken'
+import { isTokenBlacklisted } from './security-middleware'
 
 export interface AuthToken {
   userId: string
@@ -7,37 +8,84 @@ export interface AuthToken {
   role: 'ADMIN' | 'ASSET_MANAGER' | 'DEPARTMENT_HEAD' | 'EMPLOYEE'
   iat: number
   exp: number
+  sessionId?: string // Track sessions for logout
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-production'
+// Validate secrets exist in production
+const JWT_SECRET = process.env.JWT_SECRET
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET
 
-export function generateToken(userId: string, email: string, role: string): string {
+if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('CRITICAL: JWT_SECRET environment variable not set')
+}
+if (!JWT_REFRESH_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('CRITICAL: JWT_REFRESH_SECRET environment variable not set')
+}
+
+// Safe defaults for development only
+const safeJWTSecret = JWT_SECRET || 'dev-secret-never-use-in-production-' + Math.random()
+const safeRefreshSecret = JWT_REFRESH_SECRET || 'dev-refresh-never-use-in-production-' + Math.random()
+
+export function generateToken(userId: string, email: string, role: string, sessionId: string): string {
   return jwt.sign(
     {
       userId,
       email,
       role,
+      sessionId,
     },
-    JWT_SECRET,
-    { expiresIn: '7d' }
+    safeJWTSecret,
+    { 
+      expiresIn: '7d',
+      algorithm: 'HS512', // Stronger algorithm
+    }
   )
 }
 
-export function generateRefreshToken(userId: string): string {
+export function generateRefreshToken(userId: string, sessionId: string): string {
   return jwt.sign(
     {
       userId,
       type: 'refresh',
+      sessionId,
     },
-    JWT_SECRET,
-    { expiresIn: '30d' }
+    safeRefreshSecret,
+    { 
+      expiresIn: '30d',
+      algorithm: 'HS512',
+    }
   )
 }
 
 export function verifyToken(token: string): AuthToken | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthToken
+    // Check if token is blacklisted (logged out)
+    if (isTokenBlacklisted(token)) {
+      return null
+    }
+
+    const decoded = jwt.verify(token, safeJWTSecret, {
+      algorithms: ['HS512'],
+    }) as AuthToken
+    
     return decoded
+  } catch (error) {
+    console.error('[v0] Token verification failed:', error instanceof Error ? error.message : 'Unknown error')
+    return null
+  }
+}
+
+export function verifyRefreshToken(token: string): { userId: string; sessionId: string } | null {
+  try {
+    if (isTokenBlacklisted(token)) {
+      return null
+    }
+
+    const decoded = jwt.verify(token, safeRefreshSecret, {
+      algorithms: ['HS512'],
+    }) as any
+    
+    return { userId: decoded.userId, sessionId: decoded.sessionId }
   } catch (error) {
     return null
   }

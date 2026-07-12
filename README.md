@@ -1,10 +1,19 @@
 # AssetFlow AI – Autonomous Enterprise Intelligence
 
-A production-ready enterprise asset management platform powered by AI, built with Next.js 16, React 19, and PostgreSQL.
+A comprehensive enterprise asset management platform powered by AI, built with Next.js 16, React 19, and PostgreSQL.
+
+**Status**: Under Production Hardening (See [AUDIT_REPORT.md](./AUDIT_REPORT.md))
 
 ## Overview
 
 AssetFlow AI is a comprehensive asset management solution designed for enterprises that need to track, allocate, maintain, and audit assets at scale. The platform combines autonomous AI intelligence with real-time tracking, predictive maintenance, and role-based workflow management.
+
+## Important: Production Status
+
+This project has completed **foundation development** and is currently undergoing a comprehensive **production-readiness audit**. See:
+- **[AUDIT_REPORT.md](./AUDIT_REPORT.md)** - Complete audit findings (Security, Performance, Architecture, Testing, Monitoring)
+- **[IMPLEMENTATION_ROADMAP.md](./IMPLEMENTATION_ROADMAP.md)** - Step-by-step fixes and timeline
+- **[SECURITY.md](./SECURITY.md)** - Security guidelines and known issues
 
 ### Core Features
 

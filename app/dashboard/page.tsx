@@ -6,10 +6,12 @@ import { StatsCards } from '@/components/dashboard/stats-cards'
 import { AssetsList } from '@/components/dashboard/assets-list'
 import { RecentActivity } from '@/components/dashboard/recent-activity'
 import { MaintenanceSchedule } from '@/components/dashboard/maintenance-schedule'
+import { ProtectedRoute } from '@/components/protected-route'
 
 export default function DashboardPage() {
   return (
-    <div className="flex h-screen bg-background">
+    <ProtectedRoute>
+      <div className="flex h-screen bg-background">
       <Sidebar />
       
       <div className="flex-1 overflow-hidden">
@@ -39,6 +41,7 @@ export default function DashboardPage() {
           </div>
         </main>
       </div>
-    </div>
+      </div>
+    </ProtectedRoute>
   )
 }

@@ -47,15 +47,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
-    const accessToken = generateToken(user.id, user.email, user.role)
-    const refreshToken = generateRefreshToken(user.id)
-
-    await prisma.session.create({
+    // Create session first to get sessionId
+    const session = await prisma.session.create({
       data: {
         userId: user.id,
-        refreshToken,
+        refreshToken: '', // Temporarily empty, will update below
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
+    })
+
+    const accessToken = generateToken(user.id, user.email, user.role, session.id)
+    const refreshToken = generateRefreshToken(user.id, session.id)
+
+    // Update session with actual refresh token
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { refreshToken },
     })
 
     await logAuditActivity({
