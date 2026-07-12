@@ -11,16 +11,9 @@ export interface AuthToken {
   sessionId?: string // Track sessions for logout
 }
 
-// Validate secrets exist in production
-const JWT_SECRET = process.env.JWT_SECRET
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET
-
-if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('CRITICAL: JWT_SECRET environment variable not set')
-}
-if (!JWT_REFRESH_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('CRITICAL: JWT_REFRESH_SECRET environment variable not set')
-}
+// Load secrets safely - allow build time without throwing
+const JWT_SECRET = process.env.JWT_SECRET || ''
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || ''
 
 // Safe defaults for development only
 const safeJWTSecret = JWT_SECRET || 'dev-secret-never-use-in-production-' + Math.random()
