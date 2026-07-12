@@ -2,43 +2,39 @@ import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { Pool } from 'pg'
 
-// Singleton pattern for Prisma client
-class PrismaClientSingleton {
-  private static instance: PrismaClient | null = null
+let prismaClient: PrismaClient | null = null
 
-  static getInstance(): PrismaClient {
-    if (!this.instance) {
-      this.instance = this.createClient()
-    }
-    return this.instance
+function getPrismaClient(): PrismaClient {
+  if (prismaClient) {
+    return prismaClient
   }
 
-  private static createClient(): PrismaClient {
-    const connectionString = process.env.DATABASE_URL
-    let adapter: any = undefined
-
-    if (connectionString) {
-      try {
-        const pool = new Pool({ connectionString })
-        adapter = new PrismaPg(pool)
-      } catch (error) {
-        console.warn(
-          '[v0] Failed to initialize database adapter:',
-          error instanceof Error ? error.message : 'Unknown error'
-        )
-      }
-    }
-
-    const clientConfig: any = {
-      log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-    }
-
-    if (adapter) {
-      clientConfig.adapter = adapter
-    }
-
-    return new PrismaClient(clientConfig)
+  const databaseUrl = process.env.DATABASE_URL
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is not set')
   }
+
+  const pool = new Pool({ connectionString: databaseUrl })
+  const adapter = new PrismaPg(pool)
+
+  const clientConfig: any = {
+    adapter,
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  }
+
+  prismaClient = new PrismaClient(clientConfig)
+  return prismaClient
 }
 
-export const prisma = PrismaClientSingleton.getInstance()
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_, prop: string | symbol) {
+    const client = getPrismaClient()
+    const value = (client as any)[prop]
+    
+    // Return the function or property with correct 'this' binding
+    if (typeof value === 'function') {
+      return value.bind(client)
+    }
+    return value
+  },
+})

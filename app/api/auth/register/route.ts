@@ -13,7 +13,6 @@ const registerSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-
     const body = await request.json()
     const data = registerSchema.parse(body)
 
@@ -39,6 +38,7 @@ export async function POST(request: NextRequest) {
         department: data.department || null,
         isActive: true,
         failedLoginAttempts: 0,
+        tokenVersion: 0,
       },
     })
 
