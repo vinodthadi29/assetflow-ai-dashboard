@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import bcrypt from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
-import { logAuditActivity } from '@/lib/audit-logger'
 
 const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -14,11 +11,16 @@ const registerSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    // Lazy imports to avoid build-time issues
+    const bcrypt = await import('bcryptjs')
+    const { prisma } = await import('@/lib/prisma')
+    const { logAuditActivity } = await import('@/lib/audit-logger')
+
     const body = await request.json()
     const data = registerSchema.parse(body)
 
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
+    const existingUser = await (prisma as any).user.findUnique({
       where: { email: data.email },
     })
 
@@ -30,7 +32,7 @@ export async function POST(request: NextRequest) {
     const hashedPassword = await bcrypt.hash(data.password, 12)
 
     // Create user with all required fields
-    const user = await prisma.user.create({
+    const user = await (prisma as any).user.create({
       data: {
         email: data.email,
         password: hashedPassword,
