@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { X, AlertCircle } from 'lucide-react'
+import { useCreateAllocation } from '@/hooks/use-allocations'
 
 interface AllocationFormProps {
   assetId: string
@@ -17,26 +18,29 @@ export function AllocationForm({ assetId, assetName, onClose, onSuccess }: Alloc
     endDate: '',
     reason: '',
   })
-  const [isLoading, setIsLoading] = useState(false)
+  
+  const createAllocation = useCreateAllocation()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.toUserId || !formData.startDate) return
-    setIsLoading(true)
+    
+    if (!formData.toUserId || !formData.startDate) {
+      return
+    }
+
     try {
-      const token = localStorage.getItem('accessToken')
-      const res = await fetch('/api/allocations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ assetId, toUserId: formData.toUserId, startDate: formData.startDate, endDate: formData.endDate || undefined, reason: formData.reason || undefined }),
+      await createAllocation.mutateAsync({
+        assetId,
+        toUserId: formData.toUserId,
+        startDate: formData.startDate,
+        endDate: formData.endDate || undefined,
+        reason: formData.reason || undefined,
       })
-      if (!res.ok) throw new Error('Failed')
+
       onSuccess?.()
       onClose()
-    } catch (err) {
-      console.error('Failed to create allocation:', err)
-    } finally {
-      setIsLoading(false)
+    } catch (error) {
+      console.error('Failed to create allocation:', error)
     }
   }
 
@@ -144,10 +148,10 @@ export function AllocationForm({ assetId, assetName, onClose, onSuccess }: Alloc
             </button>
             <button
               type="submit"
-              disabled={isLoading || !formData.toUserId || !formData.startDate}
+              disabled={createAllocation.isLoading || !formData.toUserId || !formData.startDate}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? 'Creating...' : 'Request Allocation'}
+              {createAllocation.isLoading ? 'Creating...' : 'Request Allocation'}
             </button>
           </div>
         </form>

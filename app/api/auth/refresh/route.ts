@@ -1,29 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyRefreshToken, generateToken } from '@/lib/auth-middleware'
-import { supabase } from '@/lib/supabase'
+import { prisma } from '@/lib/prisma'
+import { logAuditActivity } from '@/lib/audit-logger'
 
 export async function POST(request: NextRequest) {
   try {
-    const { refreshToken } = await request.json()
-    if (!refreshToken) return NextResponse.json({ error: 'Refresh token required' }, { status: 400 })
+    const body = await request.json()
+    const { refreshToken } = body
 
-    const decoded = await verifyRefreshToken(refreshToken)
-    if (!decoded) return NextResponse.json({ error: 'Invalid refresh token' }, { status: 401 })
+    if (!refreshToken) {
+      return NextResponse.json({ error: 'Refresh token required' }, { status: 400 })
+    }
 
-    const { data: session } = await supabase
-      .from('sessions')
-      .select('*, users(*)')
-      .eq('id', decoded.sessionId)
-      .eq('user_id', decoded.userId)
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle()
+    const decoded = verifyRefreshToken(refreshToken)
+    if (!decoded) {
+      return NextResponse.json({ error: 'Invalid or expired refresh token' }, { status: 401 })
+    }
 
-    if (!session) return NextResponse.json({ error: 'Session expired' }, { status: 401 })
+    const session = await prisma.session.findFirst({
+      where: {
+        id: decoded.sessionId,
+        userId: decoded.userId,
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+      include: {
+        user: true,
+      },
+    })
 
-    const user = (session as any).users
-    const accessToken = await generateToken(user.id, user.email, user.role, session.id)
-    return NextResponse.json({ accessToken })
-  } catch {
+    if (!session) {
+      await logAuditActivity({
+        userId: decoded.userId,
+        action: 'ACCESS_DENIED',
+        entityType: 'User',
+        entityId: decoded.userId,
+        reason: 'Refresh token validation failed - session not found',
+        ipAddress: request.headers.get('x-forwarded-for') || 'UNKNOWN',
+      })
+      return NextResponse.json({ error: 'Invalid or expired refresh token' }, { status: 401 })
+    }
+
+    const user = session.user
+    const newAccessToken = generateToken(user.id, user.email, user.role, session.id)
+
+    return NextResponse.json(
+      {
+        accessToken: newAccessToken,
+      },
+      { status: 200 }
+    )
+  } catch (error) {
+    console.error('[v0] Refresh token error:', error)
     return NextResponse.json({ error: 'Invalid refresh token' }, { status: 401 })
   }
 }

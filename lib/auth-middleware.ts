@@ -1,81 +1,133 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { SignJWT, jwtVerify } from 'jose'
+import jwt from 'jsonwebtoken'
+import { isTokenBlacklisted } from './security-middleware'
+import crypto from 'crypto'
 
 export interface AuthToken {
   userId: string
   email: string
   role: 'ADMIN' | 'ASSET_MANAGER' | 'DEPARTMENT_HEAD' | 'EMPLOYEE'
-  sessionId: string
-  iat?: number
-  exp?: number
+  iat: number
+  exp: number
+  sessionId?: string
+  tokenVersion?: number // For refresh token rotation
 }
 
-const getJWTSecret = () => {
-  const secret = process.env.JWT_SECRET || 'assetflow-dev-secret-key-change-in-production'
-  return new TextEncoder().encode(secret)
+// Load secrets safely - allow build time without throwing
+const JWT_SECRET = process.env.JWT_SECRET || ''
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || ''
+
+// Safe defaults for development only
+const safeJWTSecret = JWT_SECRET || 'dev-secret-never-use-in-production-' + Math.random()
+const safeRefreshSecret = JWT_REFRESH_SECRET || 'dev-refresh-never-use-in-production-' + Math.random()
+
+export function generateToken(userId: string, email: string, role: string, sessionId: string): string {
+  return jwt.sign(
+    {
+      userId,
+      email,
+      role,
+      sessionId,
+    },
+    safeJWTSecret,
+    { 
+      expiresIn: '7d',
+      algorithm: 'HS512', // Stronger algorithm
+    }
+  )
 }
 
-export async function generateToken(
-  userId: string,
-  email: string,
-  role: string,
-  sessionId: string
-): Promise<string> {
-  return new SignJWT({ userId, email, role, sessionId })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('7d')
-    .sign(getJWTSecret())
+export function generateRefreshToken(userId: string, sessionId: string, tokenVersion: number = 1): string {
+  return jwt.sign(
+    {
+      userId,
+      type: 'refresh',
+      sessionId,
+      tokenVersion, // Enables token rotation invalidation
+      jti: crypto.randomUUID(), // Unique token ID for tracking
+    },
+    safeRefreshSecret,
+    { 
+      expiresIn: '30d',
+      algorithm: 'HS512',
+    }
+  )
 }
 
-export async function generateRefreshToken(
-  userId: string,
-  sessionId: string
-): Promise<string> {
-  return new SignJWT({ userId, sessionId, type: 'refresh' })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('30d')
-    .sign(getJWTSecret())
-}
-
-export async function verifyToken(token: string): Promise<AuthToken | null> {
+export function verifyToken(token: string): AuthToken | null {
   try {
-    const { payload } = await jwtVerify(token, getJWTSecret())
-    return payload as unknown as AuthToken
-  } catch {
+    // Check if token is blacklisted (logged out)
+    if (isTokenBlacklisted(token)) {
+      return null
+    }
+
+    const decoded = jwt.verify(token, safeJWTSecret, {
+      algorithms: ['HS512'],
+    }) as AuthToken
+    
+    return decoded
+  } catch (error) {
+    console.error('[v0] Token verification failed:', error instanceof Error ? error.message : 'Unknown error')
     return null
   }
 }
 
-export async function verifyRefreshToken(token: string): Promise<{ userId: string; sessionId: string } | null> {
+export function verifyRefreshToken(token: string): { userId: string; sessionId: string } | null {
   try {
-    const { payload } = await jwtVerify(token, getJWTSecret())
-    if ((payload as any).type !== 'refresh') return null
-    return { userId: payload.userId as string, sessionId: payload.sessionId as string }
-  } catch {
+    if (isTokenBlacklisted(token)) {
+      return null
+    }
+
+    const decoded = jwt.verify(token, safeRefreshSecret, {
+      algorithms: ['HS512'],
+    }) as any
+    
+    return { userId: decoded.userId, sessionId: decoded.sessionId }
+  } catch (error) {
     return null
   }
 }
 
 export function extractTokenFromHeader(request: NextRequest): string | null {
   const authHeader = request.headers.get('authorization')
-  if (!authHeader?.startsWith('Bearer ')) return null
+  if (!authHeader?.startsWith('Bearer ')) {
+    return null
+  }
   return authHeader.slice(7)
 }
 
 export async function authenticateRequest(request: NextRequest): Promise<AuthToken | null> {
   const token = extractTokenFromHeader(request)
-  if (!token) return null
+  if (!token) {
+    return null
+  }
   return verifyToken(token)
+}
+
+export function requireAuth(requiredRoles?: string[]) {
+  return async (request: NextRequest) => {
+    const auth = await authenticateRequest(request)
+
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    if (requiredRoles && !requiredRoles.includes(auth.role)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    return auth
+  }
 }
 
 export function withAuth(handler: (request: NextRequest, auth: AuthToken) => Promise<NextResponse>) {
   return async (request: NextRequest) => {
     const auth = await authenticateRequest(request)
+
     if (!auth) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
     return handler(request, auth)
   }
 }
@@ -86,12 +138,15 @@ export function withRoleAuth(
 ) {
   return async (request: NextRequest) => {
     const auth = await authenticateRequest(request)
+
     if (!auth) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
     if (!allowedRoles.includes(auth.role)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
+
     return handler(request, auth)
   }
 }

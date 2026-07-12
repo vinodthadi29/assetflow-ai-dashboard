@@ -1,45 +1,99 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { withAuth } from '@/lib/auth-middleware'
-import { supabase } from '@/lib/supabase'
+import { withAuth, AuthToken } from '@/lib/auth-middleware'
+import { prisma } from '@/lib/prisma'
 import { logAuditActivity } from '@/lib/audit-logger'
 
-const CreateSchema = z.object({
+const createAuditSchema = z.object({
   assetId: z.string().optional(),
   notes: z.string().optional(),
 })
 
 export async function GET(request: NextRequest) {
-  return withAuth(async (_req, auth) => {
-    const { data, error } = await supabase.from('audit_records').select(`
-      *, asset:assets(id, asset_id, name)
-    `).order('created_at', { ascending: false })
-    if (error) throw error
+  return withAuth(async (req: NextRequest, auth: AuthToken) => {
+    try {
+      const audits = await prisma.auditRecord.findMany({
+        include: { asset: { select: { id: true, assetId: true, name: true } } },
+        orderBy: { createdAt: 'desc' },
+      })
 
-    const { data: assets } = await supabase.from('assets').select('id, asset_id, name')
-    return NextResponse.json({ success: true, data, assets })
+      const assets = await prisma.asset.findMany({
+        select: { id: true, assetId: true, name: true },
+      })
+
+      await logAuditActivity({
+        userId: auth.userId,
+        action: 'AUDIT_VIEWED',
+        description: `Viewed ${audits.length} audit records`,
+      })
+
+      return NextResponse.json({
+        success: true,
+        data: audits,
+        assets,
+      })
+    } catch (error) {
+      console.error('[v0] Error fetching audits:', error)
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch audits' },
+        { status: 500 }
+      )
+    }
   })(request)
 }
 
 export async function POST(request: NextRequest) {
-  return withAuth(async (req, auth) => {
-    const body = await req.json()
-    const v = CreateSchema.parse(body)
+  return withAuth(async (req: NextRequest, auth: AuthToken) => {
+    try {
+      const body = await req.json()
+      const validated = createAuditSchema.parse(body)
 
-    const { data: last } = await supabase.from('audit_records').select('audit_id').order('created_at', { ascending: false }).limit(1).maybeSingle()
-    const num = (parseInt(last?.audit_id?.split('-')[1] || '0') + 1).toString().padStart(4, '0')
+      // Generate audit ID
+      const lastAudit = await prisma.auditRecord.findFirst({
+        orderBy: { createdAt: 'desc' },
+      })
+      const auditNumber = (parseInt(lastAudit?.auditId?.split('-')[1] || '0') + 1)
+        .toString()
+        .padStart(4, '0')
+      const auditId = `AUDIT-${auditNumber}`
 
-    const { data, error } = await supabase.from('audit_records').insert({
-      audit_id: `AUDIT-${num}`,
-      asset_id: v.assetId || null,
-      created_by: auth.userId,
-      notes: v.notes || null,
-      status: 'PENDING',
-      discrepancies: 0,
-    }).select(`*, asset:assets(id, asset_id, name)`).single()
+      const audit = await prisma.auditRecord.create({
+        data: {
+          ...validated,
+          auditId,
+          status: 'PENDING',
+          discrepancies: 0,
+          createdBy: auth.userId,
+        },
+        include: { asset: { select: { id: true, assetId: true, name: true } } },
+      })
 
-    if (error) throw error
-    await logAuditActivity({ userId: auth.userId, action: 'AUDIT_CREATED', entityId: data.id })
-    return NextResponse.json({ success: true, data }, { status: 201 })
+      await logAuditActivity({
+        userId: auth.userId,
+        action: 'AUDIT_CREATED',
+        description: `Created audit record ${auditId}`,
+        metadata: { auditId: audit.id },
+      })
+
+      return NextResponse.json(
+        {
+          success: true,
+          data: audit,
+        },
+        { status: 201 }
+      )
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return NextResponse.json(
+          { success: false, error: 'Validation failed', details: error.errors },
+          { status: 400 }
+        )
+      }
+      console.error('[v0] Error creating audit:', error)
+      return NextResponse.json(
+        { success: false, error: 'Failed to create audit' },
+        { status: 500 }
+      )
+    }
   })(request)
 }

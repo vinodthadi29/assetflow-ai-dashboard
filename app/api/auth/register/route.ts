@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { supabase } from '@/lib/supabase'
-import { hashPassword } from '@/lib/security-middleware'
+import bcryptjs from 'bcryptjs'
+import { prisma } from '@/lib/prisma'
 
 const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -16,41 +16,93 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const data = registerSchema.parse(body)
 
-    const { data: existing } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', data.email)
-      .maybeSingle()
+    // Check if user already exists
+    const existingUser = await (prisma as any).user.findUnique({
+      where: { email: data.email },
+    })
 
-    if (existing) {
+    if (existingUser) {
       return NextResponse.json({ error: 'Email already registered' }, { status: 400 })
     }
 
-    const passwordHash = await hashPassword(data.password)
+    // Hash password with strong salt
+    const hashedPassword = await bcryptjs.hash(data.password, 12)
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .insert({
+    // Create user with all required fields
+    const user = await (prisma as any).user.create({
+      data: {
         email: data.email,
+        password: hashedPassword,
         name: data.name,
-        password_hash: passwordHash,
         role: data.role,
         department: data.department || null,
-      })
-      .select('id, email, name, role')
-      .single()
-
-    if (error) throw error
+        isActive: true,
+        failedLoginAttempts: 0,
+        tokenVersion: 0,
+      },
+    })
 
     return NextResponse.json(
-      { message: 'User created successfully', user },
+      {
+        message: 'User created successfully',
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+      },
       { status: 201 }
     )
   } catch (error) {
+    // Handle validation errors
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: 'Validation failed', details: error.errors }, { status: 400 })
+      const fieldErrors = error.errors.map(e => ({
+        field: e.path.join('.'),
+        message: e.message,
+      }))
+      return NextResponse.json(
+        { error: 'Validation failed', details: fieldErrors },
+        { status: 400 }
+      )
     }
-    console.error('[v0] Register error:', error)
-    return NextResponse.json({ error: 'Registration failed' }, { status: 500 })
+
+    // Handle Prisma errors
+    if (error instanceof Error) {
+      console.error('[v0] Register error:', error.message)
+      
+      // Specific error messages
+      if (error.message.includes('Unique constraint failed')) {
+        return NextResponse.json(
+          { error: 'Email already registered' },
+          { status: 400 }
+        )
+      }
+      
+      if (error.message.includes('PrismaClientInitializationError') || 
+          error.message.includes('connect ECONNREFUSED') ||
+          error.message.includes('Can\'t reach database')) {
+        return NextResponse.json(
+          { 
+            error: 'Database not configured. To use this app, please set DATABASE_URL environment variable and run: pnpm prisma migrate deploy',
+            code: 'DB_NOT_CONFIGURED'
+          },
+          { status: 503 }
+        )
+      }
+      
+      if (error.message.includes('database')) {
+        return NextResponse.json(
+          { error: 'Database connection error. Please ensure DATABASE_URL is configured.' },
+          { status: 503 }
+        )
+      }
+    }
+
+    console.error('[v0] Unexpected register error:', error)
+    return NextResponse.json(
+      { error: 'Registration failed. Please ensure DATABASE_URL is configured.' },
+      { status: 500 }
+    )
   }
 }

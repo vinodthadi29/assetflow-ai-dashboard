@@ -242,16 +242,7 @@ export default function AssetsPage() {
       {/* Asset Form Modal */}
       {showForm && (
         <AssetForm
-          initialData={editingAsset ? {
-            name: editingAsset.name,
-            description: editingAsset.description || '',
-            category: editingAsset.category,
-            location: editingAsset.location,
-            status: editingAsset.status,
-            purchaseValue: editingAsset.purchaseValue?.toString() || '',
-            currentValue: editingAsset.currentValue?.toString() || '',
-            serialNumber: editingAsset.serialNumber || '',
-          } : {}}
+          initialData={editingAsset || {}}
           onSubmit={handleSubmit}
           onClose={() => {
             setShowForm(false)

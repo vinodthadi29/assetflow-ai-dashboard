@@ -1,15 +1,73 @@
-import useSWR, { mutate as swrMutate } from 'swr'
+import { useQuery, useMutation, useQueryClient } from 'react-query'
+import { apiClient } from '@/lib/api'
 
-const fetcher = (url: string) => fetch(url).then(res => res.json())
+interface CreateAllocationInput {
+  assetId: string
+  toUserId: string
+  startDate: string
+  endDate?: string
+  reason?: string
+}
 
-export function useAllocations(filters?: Record<string, string>) {
-  const params = new URLSearchParams(filters)
-  const key = `/api/allocations?${params.toString()}`
-  const { data, error, isLoading } = useSWR(key, fetcher, { revalidateOnFocus: false })
-  return {
-    data,
-    isLoading,
-    error,
-    mutate: () => swrMutate(key),
-  }
+/**
+ * Hook to fetch allocations list
+ */
+export function useAllocations(filters?: { status?: string }) {
+  return useQuery(
+    ['allocations', filters],
+    () => apiClient.getAllocations(filters),
+    {
+      staleTime: 5 * 60 * 1000,
+      cacheTime: 10 * 60 * 1000,
+    }
+  )
+}
+
+/**
+ * Hook to create allocation
+ */
+export function useCreateAllocation() {
+  const queryClient = useQueryClient()
+
+  return useMutation(
+    (data: CreateAllocationInput) => apiClient.createAllocation(data),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['allocations'])
+        queryClient.invalidateQueries(['assets'])
+      },
+    }
+  )
+}
+
+/**
+ * Hook to approve allocation
+ */
+export function useApproveAllocation() {
+  const queryClient = useQueryClient()
+
+  return useMutation(
+    (id: string) => apiClient.approveAllocation(id),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['allocations'])
+      },
+    }
+  )
+}
+
+/**
+ * Hook to reject allocation
+ */
+export function useRejectAllocation() {
+  const queryClient = useQueryClient()
+
+  return useMutation(
+    (data: { id: string; reason: string }) => apiClient.rejectAllocation(data.id, data.reason),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['allocations'])
+      },
+    }
+  )
 }

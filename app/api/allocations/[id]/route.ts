@@ -1,34 +1,93 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { withRoleAuth, AuthToken } from '@/lib/auth-middleware'
-import { supabase } from '@/lib/supabase'
+import { prisma } from '@/lib/prisma'
 import { logAuditActivity } from '@/lib/audit-logger'
 
-const UpdateSchema = z.object({
+const UpdateAllocationSchema = z.object({
   status: z.enum(['APPROVED', 'REJECTED', 'COMPLETED', 'CANCELLED']),
   rejectedReason: z.string().optional(),
 })
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  return withRoleAuth(async (req, auth) => {
-    const { id } = await params
-    const body = await req.json()
-    const v = UpdateSchema.parse(body)
+/**
+ * PATCH /api/allocations/[id]
+ * Update allocation status (approve, reject, complete)
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  return withRoleAuth(
+    async (req: NextRequest, auth: AuthToken) => {
+      try {
+        const body = await req.json()
+        const validatedData = UpdateAllocationSchema.parse(body)
 
-    const { data: allocation } = await supabase.from('allocations').select('*').eq('id', id).maybeSingle()
-    if (!allocation) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+        const allocation = await prisma.allocation.findUnique({
+          where: { id: params.id },
+          include: { asset: true, toUser: true },
+        })
 
-    const updates: any = { status: v.status, updated_at: new Date().toISOString() }
-    if (v.status === 'APPROVED') { updates.approved_at = new Date().toISOString(); updates.approved_by = auth.userId }
-    if (v.status === 'REJECTED') { updates.rejected_at = new Date().toISOString(); updates.rejected_reason = v.rejectedReason }
+        if (!allocation) {
+          return NextResponse.json(
+            { success: false, error: 'Allocation not found' },
+            { status: 404 }
+          )
+        }
 
-    const { data, error } = await supabase.from('allocations').update(updates).eq('id', id).select(`*, asset:assets(id, asset_id, name), toUser:users!allocations_to_user_id_fkey(id, name)`).single()
-    if (error) throw error
+        // Update asset status based on allocation status
+        let assetStatusUpdate = {}
+        if (validatedData.status === 'APPROVED') {
+          assetStatusUpdate = { status: 'IN_USE' }
+        } else if (validatedData.status === 'COMPLETED') {
+          assetStatusUpdate = { status: 'AVAILABLE' }
+        }
 
-    if (v.status === 'APPROVED') await supabase.from('assets').update({ status: 'IN_USE' }).eq('id', allocation.asset_id)
-    if (v.status === 'COMPLETED') await supabase.from('assets').update({ status: 'AVAILABLE' }).eq('id', allocation.asset_id)
+        const updatedAllocation = await prisma.allocation.update({
+          where: { id: params.id },
+          data: {
+            status: validatedData.status,
+            approvedAt: validatedData.status === 'APPROVED' ? new Date() : undefined,
+            approvedBy: validatedData.status === 'APPROVED' ? auth.userId : undefined,
+            rejectedAt: validatedData.status === 'REJECTED' ? new Date() : undefined,
+            rejectedReason: validatedData.rejectedReason,
+          },
+          include: {
+            asset: { select: { id: true, assetId: true, name: true } },
+            toUser: { select: { id: true, name: true } },
+          },
+        })
 
-    await logAuditActivity({ userId: auth.userId, action: 'ALLOCATION_UPDATED', entityId: id, description: `Status changed to ${v.status}` })
-    return NextResponse.json({ success: true, data })
-  }, ['ADMIN', 'ASSET_MANAGER'])(request)
+        // Update asset status if needed
+        if (Object.keys(assetStatusUpdate).length > 0) {
+          await prisma.asset.update({
+            where: { id: allocation.assetId },
+            data: assetStatusUpdate,
+          })
+        }
+
+        await logAuditActivity({
+          userId: auth.userId,
+          action: 'ALLOCATION_CREATED',
+          description: `Updated allocation ${allocation.allocationId} to ${validatedData.status}`,
+          metadata: { allocationId: allocation.id, newStatus: validatedData.status },
+        })
+
+        return NextResponse.json({ success: true, data: updatedAllocation })
+      } catch (error) {
+        console.error('[v0] Error updating allocation:', error)
+        if (error instanceof z.ZodError) {
+          return NextResponse.json(
+            { success: false, error: 'Validation failed', details: error.errors },
+            { status: 400 }
+          )
+        }
+        return NextResponse.json(
+          { success: false, error: 'Failed to update allocation' },
+          { status: 500 }
+        )
+      }
+    },
+    ['ADMIN', 'ASSET_MANAGER']
+  )(request)
 }
