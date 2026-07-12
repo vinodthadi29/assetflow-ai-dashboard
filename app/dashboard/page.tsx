@@ -1,0 +1,44 @@
+'use client'
+
+import { Sidebar } from '@/components/dashboard/sidebar'
+import { Header } from '@/components/dashboard/header'
+import { StatsCards } from '@/components/dashboard/stats-cards'
+import { AssetsList } from '@/components/dashboard/assets-list'
+import { RecentActivity } from '@/components/dashboard/recent-activity'
+import { MaintenanceSchedule } from '@/components/dashboard/maintenance-schedule'
+
+export default function DashboardPage() {
+  return (
+    <div className="flex h-screen bg-background">
+      <Sidebar />
+      
+      <div className="flex-1 overflow-hidden">
+        <Header />
+        
+        <main className="overflow-y-auto">
+          <div className="p-8 space-y-8">
+            {/* Welcome Section */}
+            <div className="space-y-2">
+              <h1 className="text-3xl font-bold">Dashboard</h1>
+              <p className="text-muted-foreground">Welcome back. Here&apos;s your asset overview.</p>
+            </div>
+
+            {/* Stats Cards */}
+            <StatsCards />
+
+            {/* Main Content Grid */}
+            <div className="grid lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2">
+                <AssetsList />
+              </div>
+              <div className="space-y-8">
+                <MaintenanceSchedule />
+                <RecentActivity />
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
