@@ -31,6 +31,8 @@ model User {
   auditItems    AuditItem[]
   approvals     Approval[]
   activities    Activity[]
+  sessions      Session[]
+  notifications Notification[]
 
   @@index([email])
   @@index([role])
@@ -79,6 +81,7 @@ model Asset {
   maintenance       MaintenanceTicket[]
   auditItems        AuditItem[]
   activities        Activity[]
+  files             AssetFile[]
 
   @@index([status])
   @@index([location])
@@ -374,10 +377,60 @@ enum ActivityAction {
 model Session {
   id                String              @id @default(cuid())
   userId            String
-  token             String              @unique
+  refreshToken      String              @unique
   expiresAt         DateTime
+  createdAt         DateTime            @default(now())
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshToken])
+}
+
+// Notification Model
+model Notification {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              NotificationType
+  title             String
+  message           String
+  actionUrl         String?
+  metadata          String?             // JSON for additional data
+  readAt            DateTime?
   createdAt         DateTime            @default(now())
 
   @@index([userId])
-  @@index([token])
+  @@index([readAt])
+  @@index([createdAt])
+}
+
+enum NotificationType {
+  ALLOCATION_REQUEST
+  ALLOCATION_APPROVED
+  ALLOCATION_REJECTED
+  MAINTENANCE_ALERT
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  ASSET_RETIRED
+  COMPLIANCE_ALERT
+  SYSTEM_ALERT
+}
+
+// Asset Files for documentation, manuals, invoices, etc
+model AssetFile {
+  id                String              @id @default(cuid())
+  assetId           String
+  asset             Asset               @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  filename          String
+  filepath          String
+  fileType          String              // IMAGE, DOCUMENT, MANUAL, INVOICE, RECEIPT, WARRANTY
+  fileSize          Int
+  mimeType          String
+  uploadedBy        String
+  uploadedAt        DateTime            @default(now())
+  deletedAt         DateTime?
+
+  @@index([assetId])
+  @@index([fileType])
+  @@index([uploadedAt])
 }

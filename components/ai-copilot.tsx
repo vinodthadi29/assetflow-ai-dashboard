@@ -23,19 +23,35 @@ export function AICopilot() {
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }])
     setIsLoading(true)
 
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        'Based on the current inventory, you have 45 assets in maintenance. Would you like to see the detailed maintenance schedule?',
-        'The average asset age is 4.2 years. I recommend scheduling preventive maintenance for assets over 8 years old.',
-        'You have 12 pending allocations awaiting approval. The average approval time is 2 days. Should I prioritize any?',
-        'Asset utilization is at 78%, which is optimal. Your most utilized asset is the forklift in Warehouse A.',
-        'I found 3 critical alerts: 2 assets need immediate maintenance and 1 allocation is overdue approval.',
-      ]
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-      setMessages((prev) => [...prev, { role: 'assistant', content: randomResponse }])
+    try {
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
+        },
+        body: JSON.stringify({ message: userMessage }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: data.message }])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: 'Sorry, I encountered an error processing your request.' },
+        ])
+      }
+    } catch (error) {
+      console.error('[v0] AI error:', error)
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Sorry, I\'m having trouble connecting. Please try again.' },
+      ])
+    } finally {
       setIsLoading(false)
-    }, 1000)
+    }
   }
 
   return (

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { withAuth, withRoleAuth, AuthToken } from '@/lib/auth-middleware'
+import { prisma } from '@/lib/prisma'
+import { logAuditActivity } from '@/lib/audit-logger'
+import { hasPermission } from '@/lib/permissions'
 
 // Request validation schemas
 const CreateAssetSchema = z.object({
@@ -11,6 +15,7 @@ const CreateAssetSchema = z.object({
   manufacturer: z.string().optional(),
   model: z.string().optional(),
   serialNumber: z.string().optional(),
+  departmentId: z.string().optional(),
 })
 
 const GetAssetsSchema = z.object({
@@ -25,67 +30,62 @@ const GetAssetsSchema = z.object({
  * Fetch assets with optional filtering
  */
 export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams
-    const query = {
-      category: searchParams.get('category') || undefined,
-      status: searchParams.get('status') || undefined,
-      limit: parseInt(searchParams.get('limit') || '10'),
-      offset: parseInt(searchParams.get('offset') || '0'),
-    }
+  return withAuth(async (req: NextRequest, auth: AuthToken) => {
+    try {
+      const searchParams = req.nextUrl.searchParams
+      const query = {
+        category: searchParams.get('category') || undefined,
+        status: searchParams.get('status') || undefined,
+        limit: parseInt(searchParams.get('limit') || '10'),
+        offset: parseInt(searchParams.get('offset') || '0'),
+      }
 
-    // Validate query parameters
-    const validatedQuery = GetAssetsSchema.parse(query)
+      const validatedQuery = GetAssetsSchema.parse(query)
 
-    // TODO: Query database using Prisma
-    // const assets = await prisma.asset.findMany({
-    //   where: {
-    //     ...(validatedQuery.category && { category: validatedQuery.category }),
-    //     ...(validatedQuery.status && { status: validatedQuery.status }),
-    //     deletedAt: null,
-    //   },
-    //   take: validatedQuery.limit,
-    //   skip: validatedQuery.offset,
-    // })
+      const assets = await prisma.asset.findMany({
+        where: {
+          ...(validatedQuery.category && { category: validatedQuery.category }),
+          ...(validatedQuery.status && { status: validatedQuery.status }),
+          deletedAt: null,
+        },
+        include: {
+          allocations: {
+            where: {
+              status: { in: ['ACTIVE', 'PENDING'] },
+            },
+          },
+        },
+        take: validatedQuery.limit,
+        skip: validatedQuery.offset,
+      })
 
-    // Mock response for now
-    const assets = [
-      {
-        id: 'AST-001',
-        name: 'MacBook Pro 16"',
-        category: 'COMPUTERS',
-        status: 'IN_USE',
-        location: 'Office A - Desk 1',
-        owner: 'John Smith',
-      },
-      {
-        id: 'AST-002',
-        name: 'Dell Monitor 27"',
-        category: 'MONITORS',
-        status: 'IN_USE',
-        location: 'Office B - Desk 5',
-        owner: 'Sarah Johnson',
-      },
-    ]
+      const total = await prisma.asset.count({
+        where: {
+          ...(validatedQuery.category && { category: validatedQuery.category }),
+          ...(validatedQuery.status && { status: validatedQuery.status }),
+          deletedAt: null,
+        },
+      })
 
-    return NextResponse.json(
-      {
+      await logAuditActivity({
+        userId: auth.userId,
+        action: 'VIEW',
+        entityType: 'Asset',
+        entityId: 'LIST',
+        reason: `Fetched ${assets.length} assets`,
+      })
+
+      return NextResponse.json({
         success: true,
         data: assets,
-        total: 2,
-      },
-      { status: 200 }
-    )
-  } catch (error) {
-    console.error('[API] Error fetching assets:', error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Failed to fetch assets',
-      },
-      { status: 500 }
-    )
-  }
+        total,
+        hasMore: query.offset + validatedQuery.limit < total,
+      })
+    } catch (error) {
+      console.error('[v0] Error fetching assets:', error)
+      return NextResponse.json({ success: false, error: 'Failed to fetch assets' }, { status: 500 })
+    }
+  })(request)
 }
 
 /**
@@ -93,55 +93,50 @@ export async function GET(request: NextRequest) {
  * Create a new asset
  */
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
+  return withRoleAuth(
+    async (req: NextRequest, auth: AuthToken) => {
+      try {
+        const user = await prisma.user.findUnique({ where: { id: auth.userId } })
+        if (!user || !hasPermission(user.role, 'canCreateAssets')) {
+          await logAuditActivity({
+            userId: auth.userId,
+            action: 'ACCESS_DENIED',
+            entityType: 'Asset',
+            entityId: 'CREATE',
+            reason: 'Insufficient permissions',
+          })
+          return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+        }
 
-    // Validate request body
-    const validatedData = CreateAssetSchema.parse(body)
+        const body = await req.json()
+        const validatedData = CreateAssetSchema.parse(body)
 
-    // TODO: Create asset in database
-    // const asset = await prisma.asset.create({
-    //   data: {
-    //     assetId: `AST-${Date.now()}`,
-    //     ...validatedData,
-    //   },
-    // })
+        const asset = await prisma.asset.create({
+          data: {
+            ...validatedData,
+            status: 'AVAILABLE',
+            departmentId: validatedData.departmentId || user.departmentId,
+            createdBy: auth.userId,
+          },
+        })
 
-    // Mock response
-    const asset = {
-      id: 'AST-001',
-      assetId: 'AST-001',
-      ...validatedData,
-      status: 'AVAILABLE',
-      createdAt: new Date(),
-    }
+        await logAuditActivity({
+          userId: auth.userId,
+          action: 'CREATE',
+          entityType: 'Asset',
+          entityId: asset.id,
+          reason: `Created asset: ${asset.name}`,
+        })
 
-    return NextResponse.json(
-      {
-        success: true,
-        data: asset,
-      },
-      { status: 201 }
-    )
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Validation failed',
-          details: error.errors,
-        },
-        { status: 400 }
-      )
-    }
-
-    console.error('[API] Error creating asset:', error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Failed to create asset',
-      },
-      { status: 500 }
-    )
-  }
+        return NextResponse.json({ success: true, data: asset }, { status: 201 })
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return NextResponse.json({ success: false, error: 'Validation failed', details: error.errors }, { status: 400 })
+        }
+        console.error('[v0] Error creating asset:', error)
+        return NextResponse.json({ success: false, error: 'Failed to create asset' }, { status: 500 })
+      }
+    },
+    ['ADMIN', 'ASSET_MANAGER']
+  )(request)
 }

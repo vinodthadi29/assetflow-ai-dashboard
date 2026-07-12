@@ -1,11 +1,12 @@
 'use client'
 
-import { Search, Bell, User } from 'lucide-react'
+import { Search, User } from 'lucide-react'
+import { NotificationCenter } from '@/components/notification-center'
 
 export function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-border/30 bg-card/50 backdrop-blur-sm">
-      <div className="px-8 py-4 flex items-center justify-between">
+      <div className="px-8 py-4 flex items-center justify-between relative">
         {/* Search */}
         <div className="flex-1 max-w-md">
           <div className="relative">
@@ -20,10 +21,7 @@ export function Header() {
 
         {/* Actions */}
         <div className="flex items-center gap-4 ml-6">
-          <button className="relative p-2 text-muted-foreground hover:text-foreground transition">
-            <Bell className="w-5 h-5" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full" />
-          </button>
+          <NotificationCenter />
           <button className="p-2 rounded-lg bg-background text-muted-foreground hover:text-foreground transition">
             <User className="w-5 h-5" />
           </button>
