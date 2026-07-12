@@ -1,78 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withRoleAuth, AuthToken } from '@/lib/auth-middleware'
-import { prisma } from '@/lib/prisma'
+import { supabase } from '@/lib/supabase'
 import { logAuditActivity } from '@/lib/audit-logger'
 
-/**
- * POST /api/assets/[id]/duplicate
- * Duplicate an asset
- */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  return withRoleAuth(
-    async (req: NextRequest, auth: AuthToken) => {
-      try {
-        const asset = await prisma.asset.findFirst({
-          where: { id: params.id, deletedAt: null },
-        })
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return withRoleAuth(async (_req, auth) => {
+    const { id } = await params
+    const { data: asset } = await supabase.from('assets').select('*').eq('id', id).is('deleted_at', null).maybeSingle()
+    if (!asset) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-        if (!asset) {
-          return NextResponse.json(
-            { success: false, error: 'Asset not found' },
-            { status: 404 }
-          )
-        }
+    const { data: last } = await supabase.from('assets').select('asset_id').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    const num = (parseInt(last?.asset_id?.split('-')[1] || '0') + 1).toString().padStart(4, '0')
 
-        // Generate unique assetId
-        const lastAsset = await prisma.asset.findFirst({
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-        })
-        const assetNumber = (parseInt(lastAsset?.assetId?.split('-')[1] || '0') + 1)
-          .toString()
-          .padStart(4, '0')
-        const newAssetId = `AST-${assetNumber}`
+    const { data, error } = await supabase.from('assets').insert({
+      asset_id: `AST-${num}`,
+      name: `${asset.name} (Copy)`,
+      description: asset.description,
+      category: asset.category,
+      location: asset.location,
+      status: 'AVAILABLE',
+      manufacturer: asset.manufacturer,
+      model: asset.model,
+      notes: `Duplicated from ${asset.asset_id}`,
+    }).select().single()
 
-        const duplicatedAsset = await prisma.asset.create({
-          data: {
-            assetId: newAssetId,
-            name: `${asset.name} (Copy)`,
-            description: asset.description,
-            category: asset.category,
-            subcategory: asset.subcategory,
-            location: asset.location,
-            status: 'AVAILABLE',
-            purchaseDate: asset.purchaseDate,
-            purchaseValue: asset.purchaseValue,
-            currentValue: asset.currentValue,
-            manufacturer: asset.manufacturer,
-            model: asset.model,
-            serialNumber: null, // Don't copy serial number
-            warrantyExpiry: asset.warrantyExpiry,
-            depreciationRate: asset.depreciationRate,
-            tags: asset.tags,
-            notes: asset.notes ? `Duplicated from ${asset.assetId}: ${asset.notes}` : `Duplicated from ${asset.assetId}`,
-          },
-        })
-
-        await logAuditActivity({
-          userId: auth.userId,
-          action: 'ASSET_CREATED',
-          description: `Duplicated asset: ${asset.name} to ${duplicatedAsset.name}`,
-          metadata: { sourceAssetId: asset.id, duplicateAssetId: duplicatedAsset.id },
-        })
-
-        return NextResponse.json({ success: true, data: duplicatedAsset }, { status: 201 })
-      } catch (error) {
-        console.error('[v0] Error duplicating asset:', error)
-        return NextResponse.json(
-          { success: false, error: 'Failed to duplicate asset' },
-          { status: 500 }
-        )
-      }
-    },
-    ['ADMIN', 'ASSET_MANAGER']
-  )(request)
+    if (error) throw error
+    await logAuditActivity({ userId: auth.userId, action: 'ASSET_DUPLICATED', entityId: id })
+    return NextResponse.json({ success: true, data }, { status: 201 })
+  }, ['ADMIN', 'ASSET_MANAGER'])(request)
 }

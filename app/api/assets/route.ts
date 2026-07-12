@@ -1,190 +1,81 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { withAuth, withRoleAuth, AuthToken } from '@/lib/auth-middleware'
-import { prisma } from '@/lib/prisma'
+import { supabase } from '@/lib/supabase'
 import { logAuditActivity } from '@/lib/audit-logger'
-import { hasPermission } from '@/lib/permissions'
 
-// Request validation schemas
 const CreateAssetSchema = z.object({
-  name: z.string().min(1, 'Asset name is required'),
+  name: z.string().min(1),
   description: z.string().optional(),
-  category: z.string().min(1, 'Category is required'),
+  category: z.string().min(1),
   subcategory: z.string().optional(),
-  location: z.string().min(1, 'Location is required'),
+  location: z.string().min(1),
   status: z.string().optional(),
-  purchaseDate: z.string().optional(),
-  purchaseValue: z.coerce.number().optional(),
-  currentValue: z.coerce.number().optional(),
+  purchase_date: z.string().optional(),
+  purchase_value: z.coerce.number().optional(),
+  current_value: z.coerce.number().optional(),
   manufacturer: z.string().optional(),
   model: z.string().optional(),
-  serialNumber: z.string().optional(),
-  warrantyExpiry: z.string().optional(),
-  depreciationRate: z.coerce.number().optional(),
-  assignedTo: z.string().optional(),
+  serial_number: z.string().optional(),
+  warranty_expiry: z.string().optional(),
+  depreciation_rate: z.coerce.number().optional(),
+  assigned_to: z.string().optional(),
   notes: z.string().optional(),
 })
 
-const GetAssetsSchema = z.object({
-  search: z.string().optional(),
-  category: z.string().optional(),
-  status: z.string().optional(),
-  location: z.string().optional(),
-  condition: z.string().optional(),
-  sortBy: z.string().default('assetId'),
-  sortOrder: z.enum(['asc', 'desc']).default('asc'),
-  limit: z.coerce.number().default(100),
-  offset: z.coerce.number().default(0),
-})
-
-/**
- * GET /api/assets
- * Fetch assets with advanced filtering and sorting
- */
 export async function GET(request: NextRequest) {
   return withAuth(async (req: NextRequest, auth: AuthToken) => {
-    try {
-      const searchParams = req.nextUrl.searchParams
-      const query = {
-        search: searchParams.get('search') || undefined,
-        category: searchParams.get('category') || undefined,
-        status: searchParams.get('status') || undefined,
-        location: searchParams.get('location') || undefined,
-        condition: searchParams.get('condition') || undefined,
-        sortBy: searchParams.get('sortBy') || 'assetId',
-        sortOrder: (searchParams.get('sortOrder') as 'asc' | 'desc') || 'asc',
-        limit: parseInt(searchParams.get('limit') || '100'),
-        offset: parseInt(searchParams.get('offset') || '0'),
-      }
+    const sp = req.nextUrl.searchParams
+    let query = supabase.from('assets').select('*').is('deleted_at', null)
 
-      const validatedQuery = GetAssetsSchema.parse(query)
-
-      // Build where clause
-      const where: any = { deletedAt: null }
-      if (validatedQuery.category) where.category = validatedQuery.category
-      if (validatedQuery.status) where.status = validatedQuery.status
-      if (validatedQuery.location) where.location = validatedQuery.location
-      if (validatedQuery.search) {
-        where.OR = [
-          { name: { contains: validatedQuery.search, mode: 'insensitive' } },
-          { assetId: { contains: validatedQuery.search, mode: 'insensitive' } },
-          { serialNumber: { contains: validatedQuery.search, mode: 'insensitive' } },
-          { description: { contains: validatedQuery.search, mode: 'insensitive' } },
-        ]
-      }
-
-      // Build order by clause
-      const orderBy: any = {}
-      const sortField = validatedQuery.sortBy === 'assetId' ? 'assetId' : 
-                        validatedQuery.sortBy === 'name' ? 'name' :
-                        validatedQuery.sortBy === 'category' ? 'category' :
-                        validatedQuery.sortBy === 'status' ? 'status' : 'createdAt'
-      orderBy[sortField] = validatedQuery.sortOrder
-
-      const assets = await prisma.asset.findMany({
-        where,
-        orderBy,
-        take: validatedQuery.limit,
-        skip: validatedQuery.offset,
-      })
-
-      const total = await prisma.asset.count({ where })
-
-      // Log to security audit instead of activity audit
-      await prisma.securityAuditLog.create({
-        data: {
-          userId: auth.userId,
-          action: 'ASSET_LIST_VIEWED',
-          status: 'SUCCESS',
-          metadata: { count: assets.length, filters: validatedQuery },
-        },
-      }).catch(() => {
-        // Silently fail if table doesn't exist yet (migration not run)
-      })
-
-      return NextResponse.json({
-        success: true,
-        data: assets,
-        total,
-        hasMore: validatedQuery.offset + validatedQuery.limit < total,
-      })
-    } catch (error) {
-      console.error('[v0] Error fetching assets:', error)
-      if (error instanceof z.ZodError) {
-        return NextResponse.json(
-          { success: false, error: 'Validation failed', details: error.errors },
-          { status: 400 }
-        )
-      }
-      return NextResponse.json(
-        { success: false, error: 'Failed to fetch assets' },
-        { status: 500 }
-      )
+    const search = sp.get('search')
+    if (search) {
+      query = query.or(`name.ilike.%${search}%,asset_id.ilike.%${search}%,serial_number.ilike.%${search}%`)
     }
+    if (sp.get('category')) query = query.eq('category', sp.get('category')!)
+    if (sp.get('status')) query = query.eq('status', sp.get('status')!)
+    if (sp.get('location')) query = query.ilike('location', `%${sp.get('location')}%`)
+
+    const sortBy = sp.get('sortBy') || 'asset_id'
+    const sortOrder = sp.get('sortOrder') === 'desc'
+    query = query.order(sortBy, { ascending: !sortOrder })
+
+    const limit = Math.min(parseInt(sp.get('limit') || '100'), 1000)
+    const offset = parseInt(sp.get('offset') || '0')
+    query = query.range(offset, offset + limit - 1)
+
+    const { data, error, count } = await query
+    if (error) throw error
+
+    return NextResponse.json({ success: true, data, total: count, hasMore: false })
   })(request)
 }
 
-/**
- * POST /api/assets
- * Create a new asset
- */
 export async function POST(request: NextRequest) {
-  return withRoleAuth(
-    async (req: NextRequest, auth: AuthToken) => {
-      try {
-        const user = await prisma.user.findUnique({ where: { id: auth.userId } })
-        if (!user) {
-          return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
-        }
+  return withRoleAuth(async (req: NextRequest, auth: AuthToken) => {
+    const body = await req.json()
+    const validated = CreateAssetSchema.parse(body)
 
-        const body = await req.json()
-        const validatedData = CreateAssetSchema.parse(body)
+    const { data: last } = await supabase
+      .from('assets')
+      .select('asset_id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
-        // Generate unique assetId
-        const lastAsset = await prisma.asset.findFirst({
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-        })
-        const assetNumber = (parseInt(lastAsset?.assetId?.split('-')[1] || '0') + 1)
-          .toString()
-          .padStart(4, '0')
-        const assetId = `AST-${assetNumber}`
+    const num = (parseInt(last?.asset_id?.split('-')[1] || '0') + 1).toString().padStart(4, '0')
+    const assetId = `AST-${num}`
 
-        const asset = await prisma.asset.create({
-          data: {
-            ...validatedData,
-            assetId,
-            status: validatedData.status || 'AVAILABLE',
-            purchaseDate: validatedData.purchaseDate ? new Date(validatedData.purchaseDate) : null,
-            warrantyExpiry: validatedData.warrantyExpiry ? new Date(validatedData.warrantyExpiry) : null,
-            purchaseValue: validatedData.purchaseValue || null,
-            currentValue: validatedData.currentValue || null,
-            depreciationRate: validatedData.depreciationRate || 0,
-          },
-        })
+    const { data, error } = await supabase
+      .from('assets')
+      .insert({ ...validated, asset_id: assetId, status: validated.status || 'AVAILABLE' })
+      .select()
+      .single()
 
-        await logAuditActivity({
-          userId: auth.userId,
-          action: 'ASSET_CREATED',
-          description: `Created asset: ${asset.name}`,
-          metadata: { assetId: asset.id },
-        })
+    if (error) throw error
 
-        return NextResponse.json({ success: true, data: asset }, { status: 201 })
-      } catch (error) {
-        console.error('[v0] Error creating asset:', error)
-        if (error instanceof z.ZodError) {
-          return NextResponse.json(
-            { success: false, error: 'Validation failed', details: error.errors },
-            { status: 400 }
-          )
-        }
-        return NextResponse.json(
-          { success: false, error: 'Failed to create asset' },
-          { status: 500 }
-        )
-      }
-    },
-    ['ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD']
-  )(request)
+    await logAuditActivity({ userId: auth.userId, action: 'ASSET_CREATED', entityType: 'Asset', entityId: data.id, description: `Created asset: ${data.name}` })
+
+    return NextResponse.json({ success: true, data }, { status: 201 })
+  }, ['ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD'])(request)
 }
