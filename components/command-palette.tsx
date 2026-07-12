@@ -1,12 +1,19 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { useCommandPalette } from '@/hooks/use-command-palette'
 import { Search, X } from 'lucide-react'
 
 export function CommandPalette() {
+  const [mounted, setMounted] = useState(false)
   const { isOpen, setIsOpen, searchQuery, search, results, selectedIndex, handleKeyDown } = useCommandPalette()
 
-  if (!isOpen) return null
+  // Only render after mounting to avoid hydration errors
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted || !isOpen) return null
 
   return (
     <>

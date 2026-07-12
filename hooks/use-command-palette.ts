@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 export interface CommandItem {
   id: string
@@ -12,10 +13,17 @@ export interface CommandItem {
 }
 
 export function useCommandPalette() {
+  const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [results, setResults] = useState<CommandItem[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [mounted, setMounted] = useState(false)
+
+  // Ensure component is mounted before using router
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -58,8 +66,10 @@ export function useCommandPalette() {
             subtitle: result.subtitle,
             category: result.type,
             action: () => {
-              // Navigate or open detail view based on type
-              window.location.href = `/${result.type}s/${result.id}`
+              // Navigate only if mounted and router is ready
+              if (mounted) {
+                router.push(`/${result.type}s/${result.id}`)
+              }
             },
           }))
 
