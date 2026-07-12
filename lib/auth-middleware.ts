@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import jwt from 'jsonwebtoken'
 import { isTokenBlacklisted } from './security-middleware'
+import crypto from 'crypto'
 
 export interface AuthToken {
   userId: string
@@ -8,7 +9,8 @@ export interface AuthToken {
   role: 'ADMIN' | 'ASSET_MANAGER' | 'DEPARTMENT_HEAD' | 'EMPLOYEE'
   iat: number
   exp: number
-  sessionId?: string // Track sessions for logout
+  sessionId?: string
+  tokenVersion?: number // For refresh token rotation
 }
 
 // Load secrets safely - allow build time without throwing
@@ -35,12 +37,14 @@ export function generateToken(userId: string, email: string, role: string, sessi
   )
 }
 
-export function generateRefreshToken(userId: string, sessionId: string): string {
+export function generateRefreshToken(userId: string, sessionId: string, tokenVersion: number = 1): string {
   return jwt.sign(
     {
       userId,
       type: 'refresh',
       sessionId,
+      tokenVersion, // Enables token rotation invalidation
+      jti: crypto.randomUUID(), // Unique token ID for tracking
     },
     safeRefreshSecret,
     { 

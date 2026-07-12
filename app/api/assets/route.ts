@@ -90,11 +90,16 @@ export async function GET(request: NextRequest) {
 
       const total = await prisma.asset.count({ where })
 
-      await logAuditActivity({
-        userId: auth.userId,
-        action: 'ASSET_CREATED',
-        description: `Fetched ${assets.length} assets`,
-        metadata: { query: validatedQuery },
+      // Log to security audit instead of activity audit
+      await prisma.securityAuditLog.create({
+        data: {
+          userId: auth.userId,
+          action: 'ASSET_LIST_VIEWED',
+          status: 'SUCCESS',
+          metadata: { count: assets.length, filters: validatedQuery },
+        },
+      }).catch(() => {
+        // Silently fail if table doesn't exist yet (migration not run)
       })
 
       return NextResponse.json({
