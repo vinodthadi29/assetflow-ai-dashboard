@@ -1,107 +1,99 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { withAuth, AuthToken } from '@/lib/auth-middleware'
+import { prisma } from '@/lib/prisma'
+import { logAuditActivity } from '@/lib/audit-logger'
 
-// Validation schemas
 const createMaintenanceSchema = z.object({
-  assetId: z.string().uuid(),
-  description: z.string().min(10).max(1000),
-  priority: z.enum(['low', 'medium', 'high', 'critical']),
-  scheduledDate: z.string().datetime(),
-  estimatedDuration: z.number().positive(),
-  assignedTo: z.string().uuid().optional(),
+  assetId: z.string().min(1),
+  type: z.enum(['PREVENTIVE', 'CORRECTIVE', 'EMERGENCY']),
+  description: z.string().optional(),
 })
 
-const updateMaintenanceSchema = createMaintenanceSchema.partial()
-
-// Mock data
-const mockMaintenanceTickets = [
-  {
-    id: '1',
-    assetId: 'asset-1',
-    description: 'Replace oil and filters',
-    priority: 'high',
-    status: 'scheduled',
-    scheduledDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-    estimatedDuration: 2,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-  {
-    id: '2',
-    assetId: 'asset-2',
-    description: 'Annual safety inspection',
-    priority: 'medium',
-    status: 'completed',
-    scheduledDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    estimatedDuration: 4,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-]
-
 export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams
-    const assetId = searchParams.get('assetId')
-    const status = searchParams.get('status')
+  return withAuth(async (req: NextRequest, auth: AuthToken) => {
+    try {
+      const tickets = await prisma.maintenanceTicket.findMany({
+        include: { asset: { select: { id: true, assetId: true, name: true } } },
+        orderBy: { createdAt: 'desc' },
+      })
 
-    let tickets = mockMaintenanceTickets
+      const assets = await prisma.asset.findMany({
+        select: { id: true, assetId: true, name: true },
+      })
 
-    if (assetId) {
-      tickets = tickets.filter((t) => t.assetId === assetId)
+      await logAuditActivity({
+        userId: auth.userId,
+        action: 'MAINTENANCE_VIEWED',
+        description: `Viewed ${tickets.length} maintenance tickets`,
+      })
+
+      return NextResponse.json({
+        success: true,
+        data: tickets,
+        assets,
+      })
+    } catch (error) {
+      console.error('[v0] Error fetching maintenance tickets:', error)
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch maintenance tickets' },
+        { status: 500 }
+      )
     }
-    if (status) {
-      tickets = tickets.filter((t) => t.status === status)
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: tickets,
-      count: tickets.length,
-    })
-  } catch (error) {
-    console.error('[Maintenance API] GET error:', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch maintenance tickets' },
-      { status: 500 }
-    )
-  }
+  })(request)
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const validated = createMaintenanceSchema.parse(body)
+  return withAuth(async (req: NextRequest, auth: AuthToken) => {
+    try {
+      const body = await req.json()
+      const validated = createMaintenanceSchema.parse(body)
 
-    const newTicket = {
-      id: Date.now().toString(),
-      ...validated,
-      status: 'scheduled',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }
+      // Generate ticket ID
+      const lastTicket = await prisma.maintenanceTicket.findFirst({
+        orderBy: { createdAt: 'desc' },
+      })
+      const ticketNumber = (parseInt(lastTicket?.ticketId?.split('-')[1] || '0') + 1)
+        .toString()
+        .padStart(4, '0')
+      const ticketId = `MAINT-${ticketNumber}`
 
-    mockMaintenanceTickets.push(newTicket)
+      const ticket = await prisma.maintenanceTicket.create({
+        data: {
+          ...validated,
+          ticketId,
+          status: 'OPEN',
+          createdBy: auth.userId,
+        },
+        include: { asset: { select: { id: true, assetId: true, name: true } } },
+      })
 
-    return NextResponse.json(
-      {
-        success: true,
-        data: newTicket,
-        message: 'Maintenance ticket created successfully',
-      },
-      { status: 201 }
-    )
-  } catch (error) {
-    if (error instanceof z.ZodError) {
+      await logAuditActivity({
+        userId: auth.userId,
+        action: 'MAINTENANCE_CREATED',
+        description: `Created maintenance ticket ${ticketId}`,
+        metadata: { ticketId: ticket.id },
+      })
+
       return NextResponse.json(
-        { success: false, error: 'Validation failed', details: error.errors },
-        { status: 400 }
+        {
+          success: true,
+          data: ticket,
+        },
+        { status: 201 }
+      )
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return NextResponse.json(
+          { success: false, error: 'Validation failed', details: error.errors },
+          { status: 400 }
+        )
+      }
+      console.error('[v0] Error creating maintenance ticket:', error)
+      return NextResponse.json(
+        { success: false, error: 'Failed to create maintenance ticket' },
+        { status: 500 }
       )
     }
-    console.error('[Maintenance API] POST error:', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to create maintenance ticket' },
-      { status: 500 }
-    )
-  }
+  })(request)
 }
