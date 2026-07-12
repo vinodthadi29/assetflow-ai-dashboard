@@ -1,100 +1,99 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { withAuth, AuthToken } from '@/lib/auth-middleware'
+import { prisma } from '@/lib/prisma'
+import { logAuditActivity } from '@/lib/audit-logger'
 
 const createAuditSchema = z.object({
-  name: z.string().min(5).max(200),
-  description: z.string().max(1000).optional(),
-  scheduledDate: z.string().datetime(),
-  assetIds: z.array(z.string().uuid()),
-  assignedTo: z.string().uuid(),
+  assetId: z.string().optional(),
+  notes: z.string().optional(),
 })
 
-const mockAudits = [
-  {
-    id: '1',
-    name: 'Q1 2025 Asset Verification',
-    description: 'Quarterly physical count and verification',
-    status: 'in_progress',
-    scheduledDate: new Date().toISOString(),
-    createdAt: new Date(),
-    completedAt: null,
-    itemCount: 45,
-    verifiedCount: 32,
-  },
-  {
-    id: '2',
-    name: 'Annual Compliance Audit',
-    description: 'Full compliance and regulatory check',
-    status: 'completed',
-    scheduledDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-    completedAt: new Date(),
-    itemCount: 120,
-    verifiedCount: 120,
-  },
-]
-
 export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams
-    const status = searchParams.get('status')
+  return withAuth(async (req: NextRequest, auth: AuthToken) => {
+    try {
+      const audits = await prisma.auditRecord.findMany({
+        include: { asset: { select: { id: true, assetId: true, name: true } } },
+        orderBy: { createdAt: 'desc' },
+      })
 
-    let audits = mockAudits
+      const assets = await prisma.asset.findMany({
+        select: { id: true, assetId: true, name: true },
+      })
 
-    if (status) {
-      audits = audits.filter((a) => a.status === status)
+      await logAuditActivity({
+        userId: auth.userId,
+        action: 'AUDIT_VIEWED',
+        description: `Viewed ${audits.length} audit records`,
+      })
+
+      return NextResponse.json({
+        success: true,
+        data: audits,
+        assets,
+      })
+    } catch (error) {
+      console.error('[v0] Error fetching audits:', error)
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch audits' },
+        { status: 500 }
+      )
     }
-
-    return NextResponse.json({
-      success: true,
-      data: audits,
-      count: audits.length,
-    })
-  } catch (error) {
-    console.error('[Audits API] GET error:', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch audits' },
-      { status: 500 }
-    )
-  }
+  })(request)
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const validated = createAuditSchema.parse(body)
+  return withAuth(async (req: NextRequest, auth: AuthToken) => {
+    try {
+      const body = await req.json()
+      const validated = createAuditSchema.parse(body)
 
-    const newAudit = {
-      id: Date.now().toString(),
-      ...validated,
-      status: 'pending',
-      createdAt: new Date(),
-      completedAt: null,
-      itemCount: validated.assetIds.length,
-      verifiedCount: 0,
-    }
+      // Generate audit ID
+      const lastAudit = await prisma.auditRecord.findFirst({
+        orderBy: { createdAt: 'desc' },
+      })
+      const auditNumber = (parseInt(lastAudit?.auditId?.split('-')[1] || '0') + 1)
+        .toString()
+        .padStart(4, '0')
+      const auditId = `AUDIT-${auditNumber}`
 
-    mockAudits.push(newAudit)
+      const audit = await prisma.auditRecord.create({
+        data: {
+          ...validated,
+          auditId,
+          status: 'PENDING',
+          discrepancies: 0,
+          createdBy: auth.userId,
+        },
+        include: { asset: { select: { id: true, assetId: true, name: true } } },
+      })
 
-    return NextResponse.json(
-      {
-        success: true,
-        data: newAudit,
-        message: 'Audit created successfully',
-      },
-      { status: 201 }
-    )
-  } catch (error) {
-    if (error instanceof z.ZodError) {
+      await logAuditActivity({
+        userId: auth.userId,
+        action: 'AUDIT_CREATED',
+        description: `Created audit record ${auditId}`,
+        metadata: { auditId: audit.id },
+      })
+
       return NextResponse.json(
-        { success: false, error: 'Validation failed', details: error.errors },
-        { status: 400 }
+        {
+          success: true,
+          data: audit,
+        },
+        { status: 201 }
+      )
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return NextResponse.json(
+          { success: false, error: 'Validation failed', details: error.errors },
+          { status: 400 }
+        )
+      }
+      console.error('[v0] Error creating audit:', error)
+      return NextResponse.json(
+        { success: false, error: 'Failed to create audit' },
+        { status: 500 }
       )
     }
-    console.error('[Audits API] POST error:', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to create audit' },
-      { status: 500 }
-    )
-  }
+  })(request)
 }

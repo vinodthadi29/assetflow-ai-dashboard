@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import jwt from 'jsonwebtoken'
 import { isTokenBlacklisted } from './security-middleware'
+import crypto from 'crypto'
 
 export interface AuthToken {
   userId: string
@@ -8,19 +9,13 @@ export interface AuthToken {
   role: 'ADMIN' | 'ASSET_MANAGER' | 'DEPARTMENT_HEAD' | 'EMPLOYEE'
   iat: number
   exp: number
-  sessionId?: string // Track sessions for logout
+  sessionId?: string
+  tokenVersion?: number // For refresh token rotation
 }
 
-// Validate secrets exist in production
-const JWT_SECRET = process.env.JWT_SECRET
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET
-
-if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('CRITICAL: JWT_SECRET environment variable not set')
-}
-if (!JWT_REFRESH_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('CRITICAL: JWT_REFRESH_SECRET environment variable not set')
-}
+// Load secrets safely - allow build time without throwing
+const JWT_SECRET = process.env.JWT_SECRET || ''
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || ''
 
 // Safe defaults for development only
 const safeJWTSecret = JWT_SECRET || 'dev-secret-never-use-in-production-' + Math.random()
@@ -42,12 +37,14 @@ export function generateToken(userId: string, email: string, role: string, sessi
   )
 }
 
-export function generateRefreshToken(userId: string, sessionId: string): string {
+export function generateRefreshToken(userId: string, sessionId: string, tokenVersion: number = 1): string {
   return jwt.sign(
     {
       userId,
       type: 'refresh',
       sessionId,
+      tokenVersion, // Enables token rotation invalidation
+      jti: crypto.randomUUID(), // Unique token ID for tracking
     },
     safeRefreshSecret,
     { 

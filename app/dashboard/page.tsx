@@ -3,6 +3,8 @@
 import { Sidebar } from '@/components/dashboard/sidebar'
 import { Header } from '@/components/dashboard/header'
 import { StatsCards } from '@/components/dashboard/stats-cards'
+import { AIOperationsCenter } from '@/components/dashboard/ai-operations-center'
+import { SmartAnalytics } from '@/components/dashboard/smart-analytics'
 import { AssetsList } from '@/components/dashboard/assets-list'
 import { RecentActivity } from '@/components/dashboard/recent-activity'
 import { MaintenanceSchedule } from '@/components/dashboard/maintenance-schedule'
@@ -21,12 +23,18 @@ export default function DashboardPage() {
           <div className="p-8 space-y-8">
             {/* Welcome Section */}
             <div className="space-y-2">
-              <h1 className="text-3xl font-bold">Dashboard</h1>
-              <p className="text-muted-foreground">Welcome back. Here&apos;s your asset overview.</p>
+              <h1 className="text-3xl font-bold">Good Morning, Asset Manager</h1>
+              <p className="text-muted-foreground">AI-powered operations center showing critical insights.</p>
             </div>
+
+            {/* AI Operations Center - Featured Section */}
+            <AIOperationsCenter />
 
             {/* Stats Cards */}
             <StatsCards />
+
+            {/* Smart Analytics */}
+            <SmartAnalytics />
 
             {/* Main Content Grid */}
             <div className="grid lg:grid-cols-3 gap-8">

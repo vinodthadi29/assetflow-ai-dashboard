@@ -75,9 +75,24 @@ export default function RegisterPage() {
           </div>
 
           {error && (
-            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 flex gap-3">
-              <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-destructive">{error}</p>
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 space-y-2">
+              <div className="flex gap-3">
+                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm text-destructive font-medium">{error}</p>
+                  {error.includes('DATABASE_URL') && (
+                    <div className="mt-3 text-xs text-destructive/80 space-y-1">
+                      <p className="font-semibold">To set up the database:</p>
+                      <ol className="list-decimal list-inside space-y-1 ml-1">
+                        <li>Go to your project settings</li>
+                        <li>Set DATABASE_URL environment variable</li>
+                        <li>Run: pnpm prisma migrate deploy</li>
+                        <li>Refresh this page</li>
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

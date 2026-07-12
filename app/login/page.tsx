@@ -52,9 +52,26 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 flex gap-3">
-              <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-destructive">{error}</p>
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 space-y-2">
+              <div className="flex gap-3">
+                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm text-destructive font-medium">{error}</p>
+                  {error.includes('Database') || error.includes('DATABASE_URL') && (
+                    <div className="mt-3 text-xs text-destructive/80">
+                      <p className="font-semibold mb-1">Database Setup Required:</p>
+                      <p>1. Set DATABASE_URL in your project settings</p>
+                      <p>2. Run: pnpm prisma migrate deploy</p>
+                      <p>3. Refresh and try again</p>
+                    </div>
+                  )}
+                  {!error.includes('Database') && error.includes('Account locked') && (
+                    <div className="mt-2 text-xs text-destructive/80">
+                      Account temporarily locked. Try again in 30 minutes.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

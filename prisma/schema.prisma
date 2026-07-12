@@ -3,7 +3,6 @@
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -12,16 +11,21 @@ generator client {
 
 // User and Authentication
 model User {
-  id            String          @id @default(cuid())
-  email         String          @unique
-  name          String?
-  password      String
-  avatar        String?
-  role          UserRole        @default(EMPLOYEE)
-  department    String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  deletedAt     DateTime?
+  id              String          @id @default(cuid())
+  email           String          @unique
+  name            String?
+  password        String
+  avatar          String?
+  role            UserRole        @default(EMPLOYEE)
+  department      String?
+  tokenVersion    Int             @default(1) // For token rotation
+  lastLoginAt     DateTime?
+  failedLoginAttempts Int         @default(0)
+  lockedUntil     DateTime?
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
 
   // Relations
   allocationsTo     Allocation[] @relation("toUser")
@@ -84,10 +88,12 @@ model Asset {
   activities        Activity[]
   files             AssetFile[]
 
+  @@unique([serialNumber]) // Enforce unique serial numbers
   @@index([status])
   @@index([location])
   @@index([category])
   @@index([deletedAt])
+  @@index([qrCode])
 }
 
 enum AssetCategory {
@@ -434,4 +440,26 @@ model AssetFile {
   @@index([assetId])
   @@index([fileType])
   @@index([uploadedAt])
+}
+
+// Security Audit Log - tracks sensitive operations
+model SecurityAuditLog {
+  id                String              @id @default(cuid())
+  userId            String?
+  user              User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action            String              // LOGIN, LOGOUT, FAILED_LOGIN, PERMISSION_CHANGE, ALLOCATION_APPROVED, etc
+  entityType        String?             // Asset, Allocation, Maintenance, etc
+  entityId          String?
+  status            String              // SUCCESS, FAILED, BLOCKED
+  reason            String?
+  ipAddress         String?
+  userAgent         String?
+  metadata          Json?               // Additional context
+  createdAt         DateTime            @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([status])
+  @@index([createdAt])
+  @@index([ipAddress])
 }

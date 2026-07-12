@@ -97,8 +97,8 @@ export async function canUserAccessAsset(userId: string, assetId: string): Promi
     include: {
       allocations: {
         where: {
-          assignedTo: userId,
-          status: { in: ['ACTIVE', 'PENDING'] },
+          toUserId: userId,
+          status: { in: ['APPROVED', 'COMPLETED'] },
         },
       },
     },
@@ -116,14 +116,17 @@ export async function canUserAllocateAsset(userId: string, assetId: string): Pro
   if (!user) return false
   if (!hasPermission(user.role, 'canAllocateAssets')) return false
 
+  // Admins and Asset Managers can allocate any asset
   if (user.role === 'ADMIN' || user.role === 'ASSET_MANAGER') return true
 
+  // Other roles can only allocate assets in their department
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
   })
 
   if (!asset) return false
-  return asset.departmentId === user.departmentId
+  // For department heads, check if asset is in their department
+  return asset.location === user.department
 }
 
 export async function canUserApproveMaintenance(userId: string, maintenanceId: string): Promise<boolean> {
@@ -137,20 +140,13 @@ export async function canUserApproveMaintenance(userId: string, maintenanceId: s
   const maintenance = await prisma.maintenanceTicket.findUnique({
     where: { id: maintenanceId },
     include: {
-      asset: {
-        include: {
-          allocations: {
-            where: {
-              status: { in: ['ACTIVE', 'PENDING'] },
-            },
-          },
-        },
-      },
+      asset: true,
     },
   })
 
   if (!maintenance) return false
   if (user.role === 'ADMIN' || user.role === 'ASSET_MANAGER') return true
 
-  return maintenance.asset.allocations.some((a) => a.departmentId === user.departmentId)
+  // Department heads can approve maintenance for assets in their department
+  return maintenance.asset.location === user.department
 }

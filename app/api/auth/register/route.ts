@@ -1,39 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server'
-import bcrypt from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
-import { logAuditActivity } from '@/lib/audit-logger'
 
 const registerSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-  name: z.string().min(2),
-  role: z.enum(['EMPLOYEE', 'DEPARTMENT_HEAD', 'ASSET_MANAGER', 'ADMIN']),
-  departmentId: z.string().optional(),
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  role: z.enum(['EMPLOYEE', 'DEPARTMENT_HEAD', 'ASSET_MANAGER', 'ADMIN']).default('EMPLOYEE'),
+  department: z.string().optional(),
 })
 
 export async function POST(request: NextRequest) {
   try {
+    // Lazy imports to avoid build-time issues
+    const bcrypt = await import('bcryptjs')
+    const { prisma } = await import('@/lib/prisma')
+    const { logAuditActivity } = await import('@/lib/audit-logger')
+
     const body = await request.json()
     const data = registerSchema.parse(body)
 
-    const existingUser = await prisma.user.findUnique({
+    // Check if user already exists
+    const existingUser = await (prisma as any).user.findUnique({
       where: { email: data.email },
     })
 
     if (existingUser) {
-      return NextResponse.json({ error: 'User already exists' }, { status: 400 })
+      return NextResponse.json({ error: 'Email already registered' }, { status: 400 })
     }
 
+    // Hash password with strong salt
     const hashedPassword = await bcrypt.hash(data.password, 12)
 
-    const user = await prisma.user.create({
+    // Create user with all required fields
+    const user = await (prisma as any).user.create({
       data: {
         email: data.email,
         password: hashedPassword,
         name: data.name,
         role: data.role,
-        departmentId: data.departmentId,
+        department: data.department || null,
+        isActive: true,
+        failedLoginAttempts: 0,
       },
     })
 
@@ -58,11 +65,54 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     )
   } catch (error) {
+    // Handle validation errors
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: 'Invalid input', details: error.errors }, { status: 400 })
+      const fieldErrors = error.errors.map(e => ({
+        field: e.path.join('.'),
+        message: e.message,
+      }))
+      return NextResponse.json(
+        { error: 'Validation failed', details: fieldErrors },
+        { status: 400 }
+      )
     }
 
-    console.error('[v0] Register error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    // Handle Prisma errors
+    if (error instanceof Error) {
+      console.error('[v0] Register error:', error.message)
+      
+      // Specific error messages
+      if (error.message.includes('Unique constraint failed')) {
+        return NextResponse.json(
+          { error: 'Email already registered' },
+          { status: 400 }
+        )
+      }
+      
+      if (error.message.includes('PrismaClientInitializationError') || 
+          error.message.includes('connect ECONNREFUSED') ||
+          error.message.includes('Can\'t reach database')) {
+        return NextResponse.json(
+          { 
+            error: 'Database not configured. To use this app, please set DATABASE_URL environment variable and run: pnpm prisma migrate deploy',
+            code: 'DB_NOT_CONFIGURED'
+          },
+          { status: 503 }
+        )
+      }
+      
+      if (error.message.includes('database')) {
+        return NextResponse.json(
+          { error: 'Database connection error. Please ensure DATABASE_URL is configured.' },
+          { status: 503 }
+        )
+      }
+    }
+
+    console.error('[v0] Unexpected register error:', error)
+    return NextResponse.json(
+      { error: 'Registration failed. Please ensure DATABASE_URL is configured.' },
+      { status: 500 }
+    )
   }
 }
