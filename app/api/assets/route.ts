@@ -11,15 +11,23 @@ const CreateAssetSchema = z.object({
   subcategory: z.string().optional(),
   location: z.string().min(1),
   status: z.string().optional(),
+  // accept both snake_case (direct) and camelCase (from form)
   purchase_date: z.string().optional(),
+  purchaseDate: z.string().optional(),
   purchase_value: z.coerce.number().optional(),
+  purchaseValue: z.coerce.number().optional(),
   current_value: z.coerce.number().optional(),
+  currentValue: z.coerce.number().optional(),
   manufacturer: z.string().optional(),
   model: z.string().optional(),
   serial_number: z.string().optional(),
+  serialNumber: z.string().optional(),
   warranty_expiry: z.string().optional(),
+  warrantyExpiry: z.string().optional(),
   depreciation_rate: z.coerce.number().optional(),
+  depreciationRate: z.coerce.number().optional(),
   assigned_to: z.string().optional(),
+  assignedTo: z.string().optional(),
   notes: z.string().optional(),
 })
 
@@ -36,7 +44,7 @@ export async function GET(request: NextRequest) {
     if (sp.get('status')) query = query.eq('status', sp.get('status')!)
     if (sp.get('location')) query = query.ilike('location', `%${sp.get('location')}%`)
 
-    const sortBy = sp.get('sortBy') || 'asset_id'
+    const sortBy = sp.get('sortBy') || 'created_at'
     const sortOrder = sp.get('sortOrder') === 'desc'
     query = query.order(sortBy, { ascending: !sortOrder })
 
@@ -56,25 +64,56 @@ export async function POST(request: NextRequest) {
     const body = await req.json()
     const validated = CreateAssetSchema.parse(body)
 
+    // Normalize camelCase → snake_case
+    const insertData = {
+      name: validated.name,
+      description: validated.description || null,
+      category: validated.category,
+      subcategory: validated.subcategory || null,
+      location: validated.location,
+      status: validated.status || 'AVAILABLE',
+      manufacturer: validated.manufacturer || null,
+      model: validated.model || null,
+      serial_number: validated.serial_number || validated.serialNumber || null,
+      purchase_date: validated.purchase_date || validated.purchaseDate || null,
+      purchase_value: validated.purchase_value ?? validated.purchaseValue ?? null,
+      current_value: validated.current_value ?? validated.currentValue ?? null,
+      warranty_expiry: validated.warranty_expiry || validated.warrantyExpiry || null,
+      depreciation_rate: validated.depreciation_rate ?? validated.depreciationRate ?? null,
+      assigned_to: validated.assigned_to || validated.assignedTo || null,
+      notes: validated.notes || null,
+    }
+
+    // Generate unique asset ID using max numeric suffix
     const { data: last } = await supabase
       .from('assets')
       .select('asset_id')
+      .like('asset_id', 'AST-%')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
 
-    const num = (parseInt(last?.asset_id?.split('-')[1] || '0') + 1).toString().padStart(4, '0')
-    const assetId = `AST-${num}`
+    const lastNum = last?.asset_id ? parseInt(last.asset_id.replace('AST-', '')) : 0
+    const assetId = `AST-${String(lastNum + 1).padStart(4, '0')}`
 
     const { data, error } = await supabase
       .from('assets')
-      .insert({ ...validated, asset_id: assetId, status: validated.status || 'AVAILABLE' })
+      .insert({ ...insertData, asset_id: assetId })
       .select()
       .single()
 
-    if (error) throw error
+    if (error) {
+      console.error('[assets] Insert error:', error)
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
 
-    await logAuditActivity({ userId: auth.userId, action: 'ASSET_CREATED', entityType: 'Asset', entityId: data.id, description: `Created asset: ${data.name}` })
+    await logAuditActivity({
+      userId: auth.userId,
+      action: 'ASSET_CREATED',
+      entityType: 'Asset',
+      entityId: data.id,
+      description: `Created asset: ${data.name}`,
+    })
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   }, ['ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD'])(request)

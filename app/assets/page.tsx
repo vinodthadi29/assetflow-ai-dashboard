@@ -24,7 +24,10 @@ interface Asset {
   createdAt: string
 }
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('accessToken') || '' : ''
+
+const fetcher = (url: string) =>
+  fetch(url, { headers: { Authorization: `Bearer ${getToken()}` } }).then((res) => res.json())
 
 export default function AssetsPage() {
   const [filters, setFilters] = useState<AssetFiltersType>({ search: '' })
@@ -50,7 +53,29 @@ export default function AssetsPage() {
     { revalidateOnFocus: false }
   )
 
-  const assets: Asset[] = data?.data || []
+  // Normalize snake_case API response to camelCase for the UI
+  const assets: Asset[] = (data?.data || []).map((a: any) => ({
+    id: a.id,
+    assetId: a.asset_id,
+    name: a.name,
+    category: a.category,
+    status: a.status,
+    location: a.location,
+    purchaseValue: a.purchase_value,
+    currentValue: a.current_value,
+    serialNumber: a.serial_number,
+    assignedTo: a.assigned_to,
+    description: a.description,
+    createdAt: a.created_at,
+    // keep raw fields for the edit form
+    manufacturer: a.manufacturer,
+    model: a.model,
+    subcategory: a.subcategory,
+    purchaseDate: a.purchase_date,
+    warrantyExpiry: a.warranty_expiry,
+    depreciationRate: a.depreciation_rate,
+    notes: a.notes,
+  }))
   const categories = [...new Set(assets.map((a) => a.category))].filter(Boolean)
   const statuses = [...new Set(assets.map((a) => a.status))].filter(Boolean)
   const locations = [...new Set(assets.map((a) => a.location))].filter(Boolean)
@@ -67,7 +92,10 @@ export default function AssetsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this asset?')) return
     try {
-      const response = await fetch(`/api/assets/${id}`, { method: 'DELETE' })
+      const response = await fetch(`/api/assets/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      })
       if (!response.ok) throw new Error('Failed to delete asset')
       mutate(`/api/assets?${queryParams.toString()}`)
     } catch (err) {
@@ -77,7 +105,10 @@ export default function AssetsPage() {
 
   const handleDuplicate = async (id: string) => {
     try {
-      const response = await fetch(`/api/assets/${id}/duplicate`, { method: 'POST' })
+      const response = await fetch(`/api/assets/${id}/duplicate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      })
       if (!response.ok) throw new Error('Failed to duplicate asset')
       mutate(`/api/assets?${queryParams.toString()}`)
     } catch (err) {
@@ -89,7 +120,7 @@ export default function AssetsPage() {
     try {
       const response = await fetch(`/api/assets/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({ status: 'RETIRED' }),
       })
       if (!response.ok) throw new Error('Failed to archive asset')
@@ -105,13 +136,34 @@ export default function AssetsPage() {
       const url = editingAsset ? `/api/assets/${editingAsset.id}` : '/api/assets'
       const method = editingAsset ? 'PATCH' : 'POST'
 
+      // Map camelCase form fields to snake_case for the API
+      const payload = {
+        name: formData.name,
+        description: formData.description || undefined,
+        category: formData.category,
+        subcategory: formData.subcategory || undefined,
+        location: formData.location,
+        status: formData.status,
+        manufacturer: formData.manufacturer || undefined,
+        model: formData.model || undefined,
+        serial_number: formData.serialNumber || undefined,
+        purchase_date: formData.purchaseDate || undefined,
+        purchase_value: formData.purchaseValue ? Number(formData.purchaseValue) : undefined,
+        current_value: formData.currentValue ? Number(formData.currentValue) : undefined,
+        warranty_expiry: formData.warrantyExpiry || undefined,
+        depreciation_rate: formData.depreciationRate ? Number(formData.depreciationRate) : undefined,
+        assigned_to: formData.assignedTo || undefined,
+        notes: formData.notes || undefined,
+      }
+
       const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify(payload),
       })
 
-      if (!response.ok) throw new Error('Failed to save asset')
+      const result = await response.json()
+      if (!response.ok) throw new Error(result?.error || 'Failed to save asset')
       mutate(`/api/assets?${queryParams.toString()}`)
       setShowForm(false)
       setEditingAsset(null)
@@ -124,7 +176,9 @@ export default function AssetsPage() {
 
   const handleExport = async () => {
     try {
-      const response = await fetch(`/api/assets/export?format=csv&${queryParams.toString()}`)
+      const response = await fetch(`/api/assets/export?format=csv&${queryParams.toString()}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      })
       if (!response.ok) throw new Error('Failed to export assets')
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
