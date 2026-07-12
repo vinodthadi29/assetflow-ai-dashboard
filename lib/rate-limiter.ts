@@ -68,16 +68,29 @@ class RedisRateLimiter {
     if (this.ready) return
 
     try {
-      const redis = await import('redis')
-      this.client = redis.createClient({
-        url: process.env.REDIS_URL || process.env.DATABASE_URL,
-      })
+      // Only try to initialize Redis if REDIS_URL is explicitly set
+      if (!process.env.REDIS_URL) {
+        this.ready = false
+        return
+      }
 
-      this.client.on('error', (err: Error) => console.error('[v0] Redis limiter error:', err))
-      await this.client.connect()
-      this.ready = true
+      // Dynamically import redis only if needed
+      // @ts-ignore - Optional dependency
+      try {
+        // eslint-disable-next-line global-require
+        const redis = require('redis')
+        this.client = redis.createClient({
+          url: process.env.REDIS_URL,
+        })
+
+        this.client.on('error', (err: Error) => console.error('[v0] Redis limiter error:', err))
+        await this.client.connect()
+        this.ready = true
+      } catch {
+        // Redis not installed, use in-memory limiter
+        this.ready = false
+      }
     } catch (error) {
-      console.warn('[v0] Redis rate limiter unavailable')
       this.ready = false
     }
   }
