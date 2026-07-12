@@ -2,8 +2,27 @@
 
 import { ArrowRight, Zap, BarChart3, Lock, Cpu, Bell } from 'lucide-react'
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function Home() {
+  const router = useRouter()
+  const [isChecking, setIsChecking] = useState(true)
+
+  useEffect(() => {
+    // Check if user is already logged in
+    const user = localStorage.getItem('user')
+    if (user) {
+      router.push('/dashboard')
+    } else {
+      setIsChecking(false)
+    }
+  }, [router])
+
+  if (isChecking) {
+    return <div className="min-h-screen bg-background" />
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-[#1a2332]">
       {/* Navigation */}
@@ -24,9 +43,9 @@ export default function Home() {
             <Link href="/assets" className="text-sm text-muted-foreground hover:text-foreground transition">
               Assets
             </Link>
-            <button className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition text-sm font-medium">
+            <Link href="/login" className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition text-sm font-medium inline-block">
               Sign In
-            </button>
+            </Link>
           </div>
         </div>
       </nav>

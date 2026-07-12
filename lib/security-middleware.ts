@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { RateLimiter } from 'limiter'
 import crypto from 'crypto'
 
-// Rate limiter for API endpoints
-const apiLimiter = new RateLimiter({
-  tokensPerInterval: 100,
-  interval: 'min',
-})
+// Simple in-memory rate limiting (for development)
+const requestCounts = new Map<string, { count: number; resetTime: number }>()
 
-// Stricter rate limiter for auth endpoints
-const authLimiter = new RateLimiter({
-  tokensPerInterval: 5,
-  interval: 'min',
-})
+function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now()
+  const entry = requestCounts.get(key)
+
+  if (!entry || entry.resetTime < now) {
+    requestCounts.set(key, { count: 1, resetTime: now + windowMs })
+    return true
+  }
+
+  if (entry.count >= limit) {
+    return false
+  }
+
+  entry.count++
+  return true
+}
 
 // Token blacklist (in production, use Redis)
 const tokenBlacklist = new Set<string>()

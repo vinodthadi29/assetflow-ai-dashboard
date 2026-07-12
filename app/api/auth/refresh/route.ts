@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import jwt from 'jsonwebtoken'
+import { verifyRefreshToken, generateToken } from '@/lib/auth-middleware'
 import { prisma } from '@/lib/prisma'
-import { generateToken } from '@/lib/auth-middleware'
-
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-production'
+import { logAuditActivity } from '@/lib/audit-logger'
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,10 +12,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Refresh token required' }, { status: 400 })
     }
 
-    const decoded = jwt.verify(refreshToken, JWT_SECRET) as any
+    const decoded = verifyRefreshToken(refreshToken)
+    if (!decoded) {
+      return NextResponse.json({ error: 'Invalid or expired refresh token' }, { status: 401 })
+    }
+
     const session = await prisma.session.findFirst({
       where: {
-        refreshToken,
+        id: decoded.sessionId,
         userId: decoded.userId,
         expiresAt: {
           gt: new Date(),
@@ -29,11 +31,19 @@ export async function POST(request: NextRequest) {
     })
 
     if (!session) {
+      await logAuditActivity({
+        userId: decoded.userId,
+        action: 'ACCESS_DENIED',
+        entityType: 'User',
+        entityId: decoded.userId,
+        reason: 'Refresh token validation failed - session not found',
+        ipAddress: request.headers.get('x-forwarded-for') || 'UNKNOWN',
+      })
       return NextResponse.json({ error: 'Invalid or expired refresh token' }, { status: 401 })
     }
 
     const user = session.user
-    const newAccessToken = generateToken(user.id, user.email, user.role)
+    const newAccessToken = generateToken(user.id, user.email, user.role, session.id)
 
     return NextResponse.json(
       {

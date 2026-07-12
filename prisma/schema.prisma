@@ -24,15 +24,16 @@ model User {
   deletedAt     DateTime?
 
   // Relations
-  allocations   Allocation[]
-  bookings      Booking[]
+  allocationsTo     Allocation[] @relation("toUser")
+  allocationsFrom   Allocation[] @relation("fromUser")
+  bookings          Booking[]
   maintenanceTickets MaintenanceTicket[]
-  audits        Audit[]
-  auditItems    AuditItem[]
-  approvals     Approval[]
-  activities    Activity[]
-  sessions      Session[]
-  notifications Notification[]
+  audits            Audit[]
+  auditItems        AuditItem[]
+  approvals         Approval[]
+  activities        Activity[]
+  sessions          Session[]
+  notifications     Notification[]
 
   @@index([email])
   @@index([role])
@@ -117,9 +118,9 @@ model Allocation {
   assetId           String
   asset             Asset               @relation(fields: [assetId], references: [id])
   fromUserId        String?
-  fromUser          User?               @relation(fields: [fromUserId], references: [id])
+  fromUser          User?               @relation("fromUser", fields: [fromUserId], references: [id])
   toUserId          String
-  toUser            User                @relation(fields: [toUserId], references: [id])
+  toUser            User                @relation("toUser", fields: [toUserId], references: [id])
   
   status            AllocationStatus    @default(PENDING)
   reason            String?
