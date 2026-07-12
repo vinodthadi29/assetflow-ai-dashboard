@@ -1,156 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { withAuth, withRoleAuth, AuthToken } from '@/lib/auth-middleware'
-import { prisma } from '@/lib/prisma'
+import { supabase } from '@/lib/supabase'
 import { logAuditActivity } from '@/lib/audit-logger'
 
-const CreateAllocationSchema = z.object({
-  assetId: z.string().min(1, 'Asset is required'),
-  toUserId: z.string().min(1, 'User is required'),
+const CreateSchema = z.object({
+  assetId: z.string().min(1),
+  toUserId: z.string().min(1),
   startDate: z.string(),
   endDate: z.string().optional(),
   reason: z.string().optional(),
 })
 
-/**
- * GET /api/allocations
- * Fetch all allocations with conflict detection
- */
 export async function GET(request: NextRequest) {
-  return withAuth(async (req: NextRequest, auth: AuthToken) => {
-    try {
-      const searchParams = req.nextUrl.searchParams
-      const status = searchParams.get('status')
+  return withAuth(async (req, _auth) => {
+    const status = req.nextUrl.searchParams.get('status')
+    let query = supabase.from('allocations').select(`
+      *,
+      asset:assets(id, asset_id, name),
+      toUser:users!allocations_to_user_id_fkey(id, name)
+    `)
+    if (status) query = query.eq('status', status)
+    query = query.order('created_at', { ascending: false })
+    const { data, error } = await query
+    if (error) throw error
 
-      const where: any = {}
-      if (status) where.status = status
+    const { data: assets } = await supabase
+      .from('assets')
+      .select('id, asset_id, name')
+      .eq('status', 'AVAILABLE')
+      .is('deleted_at', null)
+    const { data: users } = await supabase.from('users').select('id, name')
 
-      const allocations = await prisma.allocation.findMany({
-        where,
-        include: {
-          asset: { select: { id: true, assetId: true, name: true } },
-          toUser: { select: { id: true, name: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-      })
-
-      // Get available assets and users for form
-      const assets = await prisma.asset.findMany({
-        where: { deletedAt: null, status: 'AVAILABLE' },
-        select: { id: true, assetId: true, name: true },
-      })
-
-      const users = await prisma.user.findMany({
-        select: { id: true, name: true },
-      })
-
-      await logAuditActivity({
-        userId: auth.userId,
-        action: 'ALLOCATION_CREATED',
-        description: `Viewed ${allocations.length} allocations`,
-      })
-
-      return NextResponse.json({
-        success: true,
-        data: allocations,
-        assets,
-        users,
-      })
-    } catch (error) {
-      console.error('[v0] Error fetching allocations:', error)
-      return NextResponse.json(
-        { success: false, error: 'Failed to fetch allocations' },
-        { status: 500 }
-      )
-    }
+    return NextResponse.json({ success: true, data, assets, users })
   })(request)
 }
 
-/**
- * POST /api/allocations
- * Create new allocation with conflict detection
- */
 export async function POST(request: NextRequest) {
-  return withRoleAuth(
-    async (req: NextRequest, auth: AuthToken) => {
-      try {
-        const body = await req.json()
-        const validatedData = CreateAllocationSchema.parse(body)
+  return withRoleAuth(async (req, auth) => {
+    const body = await req.json()
+    const v = CreateSchema.parse(body)
 
-        // Check for conflicts (asset already allocated during period)
-        const conflicts = await prisma.allocation.findMany({
-          where: {
-            assetId: validatedData.assetId,
-            status: { in: ['PENDING', 'APPROVED'] },
-            OR: [
-              {
-                startDate: { lte: new Date(validatedData.endDate || validatedData.startDate) },
-                endDate: { gte: new Date(validatedData.startDate) },
-              },
-              {
-                startDate: { lte: new Date(validatedData.endDate || validatedData.startDate) },
-                endDate: null,
-              },
-            ],
-          },
-        })
+    const { data: last } = await supabase
+      .from('allocations')
+      .select('allocation_id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const num = (parseInt(last?.allocation_id?.split('-')[1] || '0') + 1).toString().padStart(4, '0')
 
-        if (conflicts.length > 0) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: 'Asset is already allocated during this period',
-              conflicts: conflicts.map((c) => c.id),
-            },
-            { status: 409 }
-          )
-        }
+    const { data, error } = await supabase.from('allocations').insert({
+      allocation_id: `ALLOC-${num}`,
+      asset_id: v.assetId,
+      to_user_id: v.toUserId,
+      start_date: v.startDate,
+      end_date: v.endDate || null,
+      reason: v.reason || null,
+      status: 'PENDING',
+    }).select(`
+      *,
+      asset:assets(id, asset_id, name),
+      toUser:users!allocations_to_user_id_fkey(id, name)
+    `).single()
 
-        // Generate unique allocationId
-        const lastAllocation = await prisma.allocation.findFirst({
-          orderBy: { createdAt: 'desc' },
-        })
-        const allocationNumber = (parseInt(lastAllocation?.allocationId?.split('-')[1] || '0') + 1)
-          .toString()
-          .padStart(4, '0')
-        const allocationId = `ALLOC-${allocationNumber}`
-
-        const allocation = await prisma.allocation.create({
-          data: {
-            ...validatedData,
-            allocationId,
-            status: 'PENDING',
-            startDate: new Date(validatedData.startDate),
-            endDate: validatedData.endDate ? new Date(validatedData.endDate) : null,
-          },
-          include: {
-            asset: { select: { id: true, assetId: true, name: true } },
-            toUser: { select: { id: true, name: true } },
-          },
-        })
-
-        await logAuditActivity({
-          userId: auth.userId,
-          action: 'ALLOCATION_CREATED',
-          description: `Created allocation ${allocationId}`,
-          metadata: { allocationId: allocation.id },
-        })
-
-        return NextResponse.json({ success: true, data: allocation }, { status: 201 })
-      } catch (error) {
-        console.error('[v0] Error creating allocation:', error)
-        if (error instanceof z.ZodError) {
-          return NextResponse.json(
-            { success: false, error: 'Validation failed', details: error.errors },
-            { status: 400 }
-          )
-        }
-        return NextResponse.json(
-          { success: false, error: 'Failed to create allocation' },
-          { status: 500 }
-        )
-      }
-    },
-    ['ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD']
-  )(request)
+    if (error) throw error
+    await logAuditActivity({ userId: auth.userId, action: 'ALLOCATION_CREATED', entityId: data.id })
+    return NextResponse.json({ success: true, data }, { status: 201 })
+  }, ['ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD'])(request)
 }

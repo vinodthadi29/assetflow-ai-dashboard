@@ -1,30 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withAuth } from '@/lib/auth-middleware'
+import { supabase } from '@/lib/supabase'
 
 export async function GET(request: NextRequest) {
-  try {
-    // Lazy imports to avoid build-time issues
-    const { authenticateRequest } = await import('@/lib/auth-middleware')
-    const { calculateAssetMetrics } = await import('@/lib/ai-insights')
+  return withAuth(async (_req, _auth) => {
+    const [assetsRes, allocationsRes] = await Promise.all([
+      supabase.from('assets').select('*').is('deleted_at', null),
+      supabase.from('allocations').select('*').eq('status', 'APPROVED'),
+    ])
 
-    // Verify authentication
-    const auth = await authenticateRequest(request)
-    if (!auth) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    // Calculate metrics
-    const metrics = await calculateAssetMetrics()
+    const assets = assetsRes.data || []
+    const allocations = allocationsRes.data || []
+    const utilizationRate = assets.length ? (allocations.length / assets.length) * 100 : 0
 
     return NextResponse.json({
       success: true,
-      metrics,
+      metrics: {
+        assetROI: Math.min(utilizationRate * 1.2, 100),
+        idleCost: (assets.length - allocations.length) * 500 * 12,
+        maintenanceForecast: assets.length * 0.8 * 200,
+        carbonSavings: allocations.length * 2.5,
+        utilizationRate,
+      },
       timestamp: new Date().toISOString(),
     })
-  } catch (error) {
-    console.error('[v0] Error calculating metrics:', error)
-    return NextResponse.json(
-      { error: 'Failed to calculate metrics' },
-      { status: 500 }
-    )
-  }
+  })(request)
 }

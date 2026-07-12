@@ -1,99 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { withAuth, AuthToken } from '@/lib/auth-middleware'
-import { prisma } from '@/lib/prisma'
+import { withAuth } from '@/lib/auth-middleware'
+import { supabase } from '@/lib/supabase'
 import { logAuditActivity } from '@/lib/audit-logger'
 
-const createMaintenanceSchema = z.object({
+const CreateSchema = z.object({
   assetId: z.string().min(1),
-  type: z.enum(['PREVENTIVE', 'CORRECTIVE', 'EMERGENCY']),
+  type: z.enum(['PREVENTIVE', 'CORRECTIVE', 'INSPECTION', 'REPAIR', 'EMERGENCY']),
+  title: z.string().optional(),
   description: z.string().optional(),
 })
 
 export async function GET(request: NextRequest) {
-  return withAuth(async (req: NextRequest, auth: AuthToken) => {
-    try {
-      const tickets = await prisma.maintenanceTicket.findMany({
-        include: { asset: { select: { id: true, assetId: true, name: true } } },
-        orderBy: { createdAt: 'desc' },
-      })
+  return withAuth(async (_req, _auth) => {
+    const { data, error } = await supabase.from('maintenance_tickets').select(`
+      *, asset:assets(id, asset_id, name)
+    `).order('created_at', { ascending: false })
+    if (error) throw error
 
-      const assets = await prisma.asset.findMany({
-        select: { id: true, assetId: true, name: true },
-      })
-
-      await logAuditActivity({
-        userId: auth.userId,
-        action: 'MAINTENANCE_VIEWED',
-        description: `Viewed ${tickets.length} maintenance tickets`,
-      })
-
-      return NextResponse.json({
-        success: true,
-        data: tickets,
-        assets,
-      })
-    } catch (error) {
-      console.error('[v0] Error fetching maintenance tickets:', error)
-      return NextResponse.json(
-        { success: false, error: 'Failed to fetch maintenance tickets' },
-        { status: 500 }
-      )
-    }
+    const { data: assets } = await supabase.from('assets').select('id, asset_id, name').is('deleted_at', null)
+    return NextResponse.json({ success: true, data, assets })
   })(request)
 }
 
 export async function POST(request: NextRequest) {
-  return withAuth(async (req: NextRequest, auth: AuthToken) => {
-    try {
-      const body = await req.json()
-      const validated = createMaintenanceSchema.parse(body)
+  return withAuth(async (req, auth) => {
+    const body = await req.json()
+    const v = CreateSchema.parse(body)
 
-      // Generate ticket ID
-      const lastTicket = await prisma.maintenanceTicket.findFirst({
-        orderBy: { createdAt: 'desc' },
-      })
-      const ticketNumber = (parseInt(lastTicket?.ticketId?.split('-')[1] || '0') + 1)
-        .toString()
-        .padStart(4, '0')
-      const ticketId = `MAINT-${ticketNumber}`
+    const { data: last } = await supabase
+      .from('maintenance_tickets')
+      .select('ticket_id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const num = (parseInt(last?.ticket_id?.split('-')[1] || '0') + 1).toString().padStart(4, '0')
 
-      const ticket = await prisma.maintenanceTicket.create({
-        data: {
-          ...validated,
-          ticketId,
-          status: 'OPEN',
-          createdBy: auth.userId,
-        },
-        include: { asset: { select: { id: true, assetId: true, name: true } } },
-      })
+    const { data, error } = await supabase.from('maintenance_tickets').insert({
+      ticket_id: `MAINT-${num}`,
+      asset_id: v.assetId,
+      created_by: auth.userId,
+      title: v.title || `${v.type} maintenance`,
+      description: v.description || null,
+      type: v.type,
+      status: 'OPEN',
+    }).select(`*, asset:assets(id, asset_id, name)`).single()
 
-      await logAuditActivity({
-        userId: auth.userId,
-        action: 'MAINTENANCE_CREATED',
-        description: `Created maintenance ticket ${ticketId}`,
-        metadata: { ticketId: ticket.id },
-      })
-
-      return NextResponse.json(
-        {
-          success: true,
-          data: ticket,
-        },
-        { status: 201 }
-      )
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return NextResponse.json(
-          { success: false, error: 'Validation failed', details: error.errors },
-          { status: 400 }
-        )
-      }
-      console.error('[v0] Error creating maintenance ticket:', error)
-      return NextResponse.json(
-        { success: false, error: 'Failed to create maintenance ticket' },
-        { status: 500 }
-      )
-    }
+    if (error) throw error
+    await logAuditActivity({ userId: auth.userId, action: 'MAINTENANCE_CREATED', entityId: data.id })
+    return NextResponse.json({ success: true, data }, { status: 201 })
   })(request)
 }
