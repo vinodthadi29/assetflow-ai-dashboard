@@ -13,9 +13,17 @@ const fetcher = (url: string) =>
 
 export function NotificationCenter() {
   const [isOpen, setIsOpen] = useState(false)
-  const { data, mutate } = useSWR('/api/notifications?limit=10', fetcher, {
-    refreshInterval: 30000,
-  })
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const { data, mutate } = useSWR(
+    mounted ? '/api/notifications?limit=10' : null,
+    fetcher,
+    { refreshInterval: 30000 }
+  )
 
   const notifications = data?.data || []
   const unreadCount = data?.unreadCount || 0

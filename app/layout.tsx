@@ -1,5 +1,6 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { Suspense } from 'react'
 import { Providers } from '@/components/providers'
 import './globals.css'
 
@@ -43,10 +44,12 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className="antialiased bg-background text-foreground">
-        {children}
-        <Providers />
+        <Suspense>
+          {children}
+          <Providers />
+        </Suspense>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
