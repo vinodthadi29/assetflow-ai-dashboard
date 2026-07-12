@@ -2,55 +2,39 @@ import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { Pool } from 'pg'
 
-const globalForPrisma = global as unknown as { prisma: PrismaClient | null }
+let prismaClient: PrismaClient | null = null
 
-let prismaInstance: PrismaClient | null = null
-
-function initializePrisma(): PrismaClient {
-  if (prismaInstance) {
-    return prismaInstance
+function getPrismaClient(): PrismaClient {
+  if (prismaClient) {
+    return prismaClient
   }
 
-  const connectionString = process.env.DATABASE_URL
-  let adapter: any = undefined
-
-  if (connectionString) {
-    try {
-      const pool = new Pool({ connectionString })
-      adapter = new PrismaPg(pool)
-    } catch (error) {
-      console.warn(
-        '[v0] Failed to initialize database adapter:',
-        error instanceof Error ? error.message : 'Unknown error'
-      )
-    }
+  const databaseUrl = process.env.DATABASE_URL
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is not set')
   }
+
+  const pool = new Pool({ connectionString: databaseUrl })
+  const adapter = new PrismaPg(pool)
 
   const clientConfig: any = {
+    adapter,
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
   }
 
-  // Only add adapter if successfully created
-  if (adapter) {
-    clientConfig.adapter = adapter
-  }
-
-  prismaInstance = new PrismaClient(clientConfig)
-  globalForPrisma.prisma = prismaInstance
-
-  return prismaInstance
+  prismaClient = new PrismaClient(clientConfig)
+  return prismaClient
 }
 
-// Lazy getter for Prisma client - only initializes when accessed
-Object.defineProperty(global, 'prismaClient', {
-  get() {
-    return initializePrisma()
-  },
-})
-
 export const prisma = new Proxy({} as PrismaClient, {
-  get: (_target, prop) => {
-    const client = initializePrisma()
-    return (client as any)[prop]
+  get(_, prop: string | symbol) {
+    const client = getPrismaClient()
+    const value = (client as any)[prop]
+    
+    // Return the function or property with correct 'this' binding
+    if (typeof value === 'function') {
+      return value.bind(client)
+    }
+    return value
   },
 })

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import bcryptjs from 'bcryptjs'
+import { prisma } from '@/lib/prisma'
 
 const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -11,11 +13,6 @@ const registerSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    // Lazy imports to avoid build-time issues
-    const bcrypt = await import('bcryptjs')
-    const { prisma } = await import('@/lib/prisma')
-    const { logAuditActivity } = await import('@/lib/audit-logger')
-
     const body = await request.json()
     const data = registerSchema.parse(body)
 
@@ -29,7 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Hash password with strong salt
-    const hashedPassword = await bcrypt.hash(data.password, 12)
+    const hashedPassword = await bcryptjs.hash(data.password, 12)
 
     // Create user with all required fields
     const user = await (prisma as any).user.create({
@@ -41,15 +38,8 @@ export async function POST(request: NextRequest) {
         department: data.department || null,
         isActive: true,
         failedLoginAttempts: 0,
+        tokenVersion: 0,
       },
-    })
-
-    await logAuditActivity({
-      userId: 'SYSTEM',
-      action: 'CREATE',
-      entityType: 'User',
-      entityId: user.id,
-      reason: `New user registered: ${user.email}`,
     })
 
     return NextResponse.json(

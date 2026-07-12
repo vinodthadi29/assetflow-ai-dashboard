@@ -38,6 +38,7 @@ model User {
   activities        Activity[]
   sessions          Session[]
   notifications     Notification[]
+  securityAuditLogs SecurityAuditLog[]
 
   @@index([email])
   @@index([role])
