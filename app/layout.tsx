@@ -1,5 +1,6 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { AICopilot } from '@/components/ai-copilot'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -45,6 +46,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className="antialiased bg-background text-foreground">
         {children}
+        <AICopilot />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
