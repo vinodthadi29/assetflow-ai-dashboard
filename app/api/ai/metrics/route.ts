@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authenticateRequest } from '@/lib/auth-middleware'
-import { calculateAssetMetrics } from '@/lib/ai-insights'
 
 export async function GET(request: NextRequest) {
   try {
+    // Lazy imports to avoid build-time issues
+    const { authenticateRequest } = await import('@/lib/auth-middleware')
+    const { calculateAssetMetrics } = await import('@/lib/ai-insights')
+
     // Verify authentication
     const auth = await authenticateRequest(request)
     if (!auth) {

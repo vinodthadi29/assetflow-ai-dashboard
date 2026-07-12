@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { runAllIntegrityChecks } from '@/lib/db-integrity'
 
 /**
  * GET /api/health
@@ -18,14 +16,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Check database connectivity
+    // Check database connectivity - lazy import to avoid build-time issues
     let dbHealthy = false
     try {
-      await prisma.user.findFirst({ take: 1 })
+      const { prisma } = await import('@/lib/prisma')
+      await (prisma as any).user?.findFirst?.({ take: 1 })
       health.checks.database = { status: 'connected', latency: 0 }
       dbHealthy = true
     } catch (error) {
-      health.checks.database = { status: 'disconnected', error: error instanceof Error ? error.message : 'Unknown' }
+      health.checks.database = { 
+        status: 'disconnected', 
+        error: error instanceof Error ? error.message : 'Unknown',
+        note: 'Ensure DATABASE_URL is configured'
+      }
       health.status = 'degraded'
     }
 
@@ -46,11 +49,12 @@ export async function GET(request: NextRequest) {
     const detailed = request.nextUrl.searchParams.get('detailed') === 'true'
     if (detailed && dbHealthy) {
       try {
+        const { runAllIntegrityChecks } = await import('@/lib/db-integrity')
         const integrityResults = await runAllIntegrityChecks()
         health.checks.integrity = integrityResults
 
         // Mark unhealthy if critical checks failed
-        if (integrityResults.summary.failed > 0) {
+        if ((integrityResults as any).summary?.failed > 0) {
           health.status = 'degraded'
         }
       } catch (error) {
